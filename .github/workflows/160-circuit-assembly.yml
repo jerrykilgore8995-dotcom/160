@@ -71,6 +71,8 @@ jobs:
               harmonics=h[200:2001:100]
               print(n,'DC',np.mean(y),'fundamental peak',fund,'THD',np.linalg.norm(harmonics)/max(fund,1e-30))
           PY
+      - name: Threshold operation and gated frequency harmonic measurements
+        run: python3 circuit/measure_threshold.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -87,3 +89,5 @@ jobs:
             circuit/run.cir
             circuit/simulation.log
             circuit/transient.tsv
+            circuit/measurements/
+            circuit/measure_threshold.py
