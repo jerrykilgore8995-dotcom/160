@@ -1,0 +1,72 @@
+160VU retrofit engineering candidate — not verified original schematic
+.include RC4558.301
+.include 2181_Macro_01.lib
+.include 4301_Macro_01.lib
+.include supply_generated.inc
+.include modern_blackmer_cells.inc
+* TI standard Boyle model pin order + - V+ V- OUT; verify downloaded header.
+.subckt RC4558_SECTION P M VP VN OUT
+XU P M VP VN OUT RC4558
+.ends
+.param RATIO=4 THRESHV=0.1 MAKEUPDB=0 RMSZERO=0
+* balanced source; voltage is differential peak.
+VINP IN_PLUS 0 SIN(0 0.5 1k)
+VINM IN_MINUS 0 SIN(0 -0.5 1k)
+R81 IN_MINUS INM_F 2.2k
+R20 IN_PLUS INP_F 2.2k
+C19 IN_MINUS 0 1n
+C20 INM_F 0 1n
+C9 IN_PLUS 0 1n
+C10 INP_F 0 1n
+R21 INM_F OA3M 20k
+R22 INP_F OA3P 20k
+R23 OA3P 0 10k
+R24 OA3OUT OA3M 10k
+XOA3 OA3P OA3M VP15 VN15 OA3OUT RC4558_SECTION
+XBLACK OA3OUT EC_MINUS LEVEL AUDIO_OUT VP15 VN15 0 BLACKMER_AUDIO
+* Threshold reference calibrated to nominal RMS input current at 85mV/10k.
+* Input amplifier differential gain = 10k/(20k+2.2k).
+* RMS detector input resistor =23.2k. RMSZERO is calibration adjustment.
+VTH THREF 0 {RMSZERO+0.0065*20*log10(THRESHV*(10k/22.2k)/23.2k/(0.085/10k))}
+* precision half wave inverting threshold amplifier: CLAMP is negative
+* above threshold, zero below. Real diode feedback, not abs/max envelope.
+RTHIN LEVEL NSUM 10k
+RTHFB CLAMP NSUM 10k
+XTH THREF NSUM VP15 VN15 RECTDRIVE RC4558_SECTION
+DTH1 RECTDRIVE NSUM DSW
+DTH2 CLAMP RECTDRIVE DSW
+RTHLOAD CLAMP THREF 100k
+* Remove threshold reference from rectified node using differential amp.
+* Inverting differential gain 6.1/6.5*(1-1/ratio).
+.param K={max(1e-6,0.0061/0.0065*(1-1/RATIO))}
+RCTL1 CLAMP CTLM 10k
+RCTL2 EC_MINUS CTLM {10k*K}
+RCTL3 THREF CTLP 10k
+RCTL4 CTLP MAKEUPREF {10k*K}
+VMAKE MAKEUPREF 0 {-0.0061*MAKEUPDB}
+XCTL CTLP CTLM VP15 VN15 EC_MINUS RC4558_SECTION
+* Authorized LM301 replacement and omitted output protection/metering.
+* Discrete complementary class AB driver candidate; original topology and
+* transistor model equivalence NOT established. Bias network engineering
+* choice, not a transcription of original driver.
+C21 AUDIO_OUT DRIVER_IN 4.7u
+RINBIAS DRIVER_IN 0 100k
+XDRV DRIVER_IN DRVM VP15 VN15 DRV RC4558_SECTION
+RFB OUT_INTERNAL DRVM 22.1k
+RG DRVM 0 22.1k
+RBIASP VP24 BASEP 10k
+RBIASN BASEN VN24 10k
+DBP BASEP DRV DSW
+DBN DRV BASEN DSW
+QP VP24 BASEP EP QDRVN
+QN VN24 BASEN EN QDRVP
+REP EP OUT_INTERNAL 22
+REN EN OUT_INTERNAL 22
+R89 OUT_INTERNAL OUT_PLUS 22
+RLOAD OUT_PLUS 0 600
+.model DSW D(IS=2.52n N=1.73 RS=.568 CJO=4p TT=4n)
+.model QDRVN NPN(IS=1e-14 BF=100 VAF=80 CJE=25p CJC=10p TF=.5n)
+.model QDRVP PNP(IS=1e-14 BF=100 VAF=80 CJE=25p CJC=10p TF=.5n)
+* Generic driver semiconductors explicitly not verified original BC361/BC263.
+* No analysis directives until connectivity and model syntax checked.
+.end
