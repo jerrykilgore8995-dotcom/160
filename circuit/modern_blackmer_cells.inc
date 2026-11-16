@@ -11,11 +11,14 @@ RSYM W SYM_IN 220k
 XGAIN IN REF EC_MINUS SYM_IN VEE REF VP OUT THAT2181B
 .ends BLACKMER_VCA
 * RMS current input; timing-current resistor and timing capacitor retained.
-* Timing component values below are provisional modern application values,
-* not claimed original 209 values; need calibration against factory timing.
-.subckt BLACKMER_RMS IN LEVEL VP VN REF params: RT=2Meg CTVAL=10u
-RTIME VP IT {RT}
-CTIME CT VN {CTVAL}
+* THAT4301 datasheet Rev07 p10: IT resistor to NEGATIVE rail; CT to ground.
+* 2Meg at -15V gives 7.5uA; 1.1 mirror yields 8.25uA.
+* CT=10uF gives nominal 126.9 dB/s at 6.5mV/dB.
+* CT=10.576923uF targets 120 dB/s analytically at nominal scale.
+* This is derived retrofit timing, not a measured original 209 equivalence.
+.subckt BLACKMER_RMS IN LEVEL VP VN REF params: RT=2Meg CTVAL=10.576923u
+RTIME IT VN {RT}
+CTIME CT REF {CTVAL}
 XDETECT IN IT CT LEVEL VN VP REF 4301RMS
 .ends BLACKMER_RMS
 * Integrated signal split and VCA I/V converter.
