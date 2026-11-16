@@ -166,7 +166,7 @@ public:
         // A recent solution at similar input can seed Newton across a
         // polarity reversal. Charge history still comes from the exact
         // preceding sample, and the solver evaluates the current sample.
-        if (error>0.010 && sameControls) {
+        if (error>1e-8 && sameControls) {
             for (int k=0;k<guessCount;++k) {
                 const auto& g=guesses[k];
                 const double e=std::abs(input-g.input);
