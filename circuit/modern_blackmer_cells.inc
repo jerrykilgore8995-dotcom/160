@@ -15,8 +15,10 @@ XGAIN IN REF EC_MINUS SYM_IN VEE REF VP OUT THAT2181B
 * 2Meg at -15V gives 7.5uA; 1.1 mirror yields 8.25uA.
 * CT=10uF gives nominal 126.9 dB/s at 6.5mV/dB.
 * CT=10.576923uF targets 120 dB/s analytically at nominal scale.
-* This is derived retrofit timing, not a measured original 209 equivalence.
-.subckt BLACKMER_RMS IN LEVEL VP VN REF params: RT=2Meg CTVAL=10.576923u
+* Selected default 909k/22u per user; verified 10.023 dB GR, 11.5 ms attack,
+* 67.5 ms recovery63 and 111.5 ms recovery to 0.1 dB in run 43817047711.
+* Historical 2Meg calculations above apply only to prior baseline.
+.subckt BLACKMER_RMS IN LEVEL VP VN REF params: RT=909k CTVAL=22u
 RTIME IT VN {RT}
 CTIME CT REF {CTVAL}
 XDETECT IN IT CT LEVEL VN VP REF 4301RMS
