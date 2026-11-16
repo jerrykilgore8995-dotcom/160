@@ -1,0 +1,80 @@
+* Original 160 rev12 split schematic pages 1–2
+* https://audiocircuit.dk/downloads/dbx/DBX-160-lim-sch.pdf
+* DRAFT: unresolved module pin mapping and output protection connections.
+* Intentionally no analysis commands. Not a validated runnable circuit.
+* Main input and VCA current path
+R81 IN_MINUS INM_F 2.2k
+R20 IN_PLUS INP_F 2.2k
+C19 IN_MINUS 0 1n
+C20 INM_F 0 1n
+C9 IN_PLUS 0 1n
+C10 INP_F 0 1n
+R21 INM_F OA3M 20k
+R22 INP_F OA3P 20k
+R23 OA3P 0 10k
+R24 OA3OUT OA3M 10k
+XOA3 OA3P OA3M VP15 VN15 OA3OUT RC4558_SECTION
+C11 OA3OUT RMS_INPUT_BRANCH 330n
+C12 OA3OUT VCA_AC 330n
+R26 VCA_AC VCA_IN 100k
+R25 VCA_REF 0 22
+* VCA balance trim; wiper fraction must be calibrated.
+.param VCASYM=0.5
+R27A VN15 VCA_SYM_W {50k*VCASYM}
+R27B VCA_SYM_W VP15 {50k*(1-VCASYM)}
+R28 VCA_SYM_W VCA_SYM 300k
+R29 VP15 VCA_BIAS 470
+* Q7 and C13 connections to module require verification before instantiation.
+* M1 is original 200, NOT a modern VCA or behavioral substitute.
+R30 VCA_CTRL_REF 0 200
+R31 VCA_CTRL 0 21.9k
+R48 VCA_CTRL CONTROL_SUM 200
+R32 VCA_OUT OA4OUT 100k
+C14 VCA_OUT OA4OUT 22p
+XOA4 0 VCA_OUT VP15 VN15 OA4OUT RC4558_SECTION
+C21 OA4OUT DRIVER_IN 4.7u
+* Output driver, page 2. Node naming is provisional.
+R81_OUT DRIVER_IN DRIVER_SUM 100k
+C22 DRIVER_IN DRIVER_SUM 150p
+R33 DRIVER_SUM OA6M 11k
+C34 DRIVER_SUM OA6M 1u
+R83 DRIVER_IN DRIVER_RETURN 10k
+C23 DRIVER_RETURN 0 100p
+R84 DRIVER_IN OUT_INTERNAL 22.1k
+R85 OA6P VP24 3.3k
+R86 OA6P BOOT_POS 2.2k
+C27 BOOT_POS OUT_INTERNAL 22u
+R87 BOOT_POS Q7OUT_B 10k
+C25 OA6M OA6OUT 10p
+C26 OA6COMP1 OA6COMP2 10p
+XOA6 OA6P OA6M VP15 VN15 OA6OUT OA6COMP1 OA6COMP2 LM301
+D14 OA6OUT Q7OUT_B D1N4148
+D16 Q8OUT_B OA6OUT D1N4148
+D15 Q7OUT_B BIAS_UP D1N4148
+D17 BIAS_DOWN Q8OUT_B D1N4148
+* Transistor pin polarity, bias diode chain and collector connections
+* require independent verification; do not simulate these draft connections.
+R88 BIAS_UP OUT_INTERNAL 22
+R90 OUT_INTERNAL BIAS_DOWN 22
+R89 OUT_INTERNAL OUT_PLUS 22
+R91 BOOT_NEG Q8OUT_B 10k
+R92 DRIVER_RETURN OUT_MINUS 22.1k
+R94 BOOT_NEG OA6P 2.2k
+C28 BOOT_NEG OUT_MINUS 22u
+R93 OUT_MINUS 0 100
+C32 OUT_MINUS 0 1n
+C35 OUT_INTERNAL OUT_MINUS 22u
+C30 OUT_MINUS PROTECT_RAIL 100u
+C24 PROTECT_RAIL 0 1n
+R96 PROTECT_RAIL PROTECT_D 10k
+D18 PROTECT_D PROTECT_GATE D1N4148
+R97 PROTECT_D 0 4.7k
+R98 VP24 PROTECT_BIAS 1Meg
+R99 PROTECT_BIAS Q9B 10k
+R101 Q9_CONTROL PROTECT_GATE 3.3Meg
+R103 PROTECT_GATE PROTECT_TIMING 15Meg
+C31 PROTECT_TIMING Q9_CONTROL 3.3n
+* Q8/Q9/Q10-Q13, protection FETs, PSU, M1/M2, ratio and meter circuitry
+* NOT yet connected. Several output network designator/value readings
+* are provisional and must be checked against full schematic/BOM.
+* Do not include in a release simulation until all unresolved nodes are closed.
