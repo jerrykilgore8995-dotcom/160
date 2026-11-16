@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
     juce::OwnedArray<juce::PluginDescription> descriptions;
     format->findAllTypesForFile(descriptions, juce::String::fromUTF8(argv[1]));
     if (descriptions.size() != 1) return 3;
-    formats.addFormat(std::move(format));
+    formats.addFormat(format.release());
     juce::String error;
     auto plugin = formats.createPluginInstance(*descriptions[0], 44100, 256, error);
     if (!plugin) {
