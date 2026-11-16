@@ -7,11 +7,16 @@
 #include <atomic>
 #include <cmath>
 #include <string>
+#ifdef MKII_NATIVE
+#include "native/Pipeline.hpp"
+#else
 #include <windows.h>
+#endif
 
 namespace {
 using namespace mkii;
 
+#ifndef MKII_NATIVE
 class CircuitProcess {
 public:
     ~CircuitProcess() { close(); }
@@ -147,6 +152,8 @@ juce::File circuitResources() {
         .getParentDirectory().getChildFile("Resources");
 }
 
+#endif
+
 class Compressor : public juce::AudioProcessor {
 public:
     enum Status { live, rendering, failed };
@@ -173,6 +180,18 @@ public:
                (in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo());
     }
 
+#ifdef MKII_NATIVE
+    void prepareToPlay(double sampleRate, int) override {
+        setLatencySamples(native::Pipeline::latency);
+        ready=engine.prepare(sampleRate,getTotalNumInputChannels());
+        status.store(ready?live:failed);
+    }
+
+    void releaseResources() override {
+        engine.stop();
+        ready=false;
+    }
+#else
     void prepareToPlay(double sampleRate, int) override {
         resources = circuitResources();
         rate = sampleRate;
@@ -189,6 +208,8 @@ public:
         status.store(live);
     }
 
+#endif
+
     void getStateInformation(juce::MemoryBlock& dest) override {
         copyXmlToBinary(*state.copyState().createXml(), dest);
     }
@@ -198,6 +219,15 @@ public:
         if (root && root->hasTagName(state.state.getType())) state.replaceState(juce::ValueTree::fromXml(*root));
     }
 
+#ifdef MKII_NATIVE
+    void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override {
+        processNative(audio,false);
+    }
+
+    void processBlockBypassed(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override {
+        processNative(audio,true);
+    }
+#else
     void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override {
         if (!isNonRealtime()) {
             renderEnded = true;
@@ -245,28 +275,59 @@ public:
         gr.store(std::clamp(maxControl / 0.0061f + settings.makeupDb, 0.0f, 40.0f));
     }
 
+#endif
+
     juce::AudioProcessorValueTreeState state;
     std::atomic<Status> status{live};
     std::atomic<float> gr{0};
 
 private:
+#ifdef MKII_NATIVE
+    void processNative(juce::AudioBuffer<float>& audio,bool dry) {
+        if (audio.getNumSamples()==0) return;
+        if (!ready) {
+            audio.clear();
+            status.store(failed);
+            return;
+        }
+        const native::Controls controls{threshold->load(),ratio->load(),output->load()};
+        const auto okay=engine.process(audio.getArrayOfWritePointers(),audio.getNumSamples(),
+                                       controls,isNonRealtime(),dry);
+        status.store(okay && !engine.failedSolves()?live:failed);
+        gr.store(std::clamp(engine.controlVolts()/0.0061f+controls.makeup,0.0f,40.0f));
+    }
+#endif
+
     static juce::AudioProcessorValueTreeState::ParameterLayout parameters() {
         using Param = juce::AudioParameterFloat;
         juce::AudioProcessorValueTreeState::ParameterLayout values;
         juce::NormalisableRange<float> threshold{0.01f, 3.0f, 0.001f, 0.35f};
         juce::NormalisableRange<float> ratio{1.0f, 120.0f, 0.01f, 0.27f};
-        values.add(std::make_unique<Param>(juce::ParameterID{"threshold", 1}, "Threshold", threshold, 0.1f));
+#ifdef MKII_NATIVE
+        constexpr float initialThreshold=0.2f;
+#else
+        constexpr float initialThreshold=0.1f;
+#endif
+        values.add(std::make_unique<Param>(juce::ParameterID{"threshold",1},"Threshold",threshold,initialThreshold));
         values.add(std::make_unique<Param>(juce::ParameterID{"ratio", 1}, "Compression", ratio, 4.0f));
         values.add(std::make_unique<Param>(juce::ParameterID{"output", 1}, "Output Gain",
                                           juce::NormalisableRange<float>{-20, 20, 0.1f}, 0.0f));
         return values;
     }
 
+#ifdef MKII_NATIVE
+    native::Pipeline engine;
+    std::atomic<float>* threshold=state.getRawParameterValue("threshold");
+    std::atomic<float>* ratio=state.getRawParameterValue("ratio");
+    std::atomic<float>* output=state.getRawParameterValue("output");
+    bool ready=false;
+#else
     std::array<CircuitProcess, 2> processes;
     Block settings;
     juce::File resources;
     double rate = 44100;
     bool started = false, broken = false, renderEnded = true;
+#endif
 };
 
 class Panel : public juce::AudioProcessorEditor, private juce::Timer {
@@ -328,10 +389,15 @@ public:
         g.setColour(juce::Colour(0xffbdb7a7));
         g.setFont(13);
         const auto working = processor.status.load();
+#ifdef MKII_NATIVE
+        g.drawText(working==Compressor::failed?"Circuit processing missed audio":"Native circuit processing",
+                   20,162,528,24,juce::Justification::centredLeft);
+#else
         g.drawText(working == Compressor::failed ? "Circuit render failed. Restart the offline bounce."
                    : working == Compressor::rendering ? "Rendering through the SPICE circuit"
                    : "Offline render only. Live playback passes through.",
                    20, 162, 528, 24, juce::Justification::centredLeft);
+#endif
     }
 
 private:

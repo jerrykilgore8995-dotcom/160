@@ -3,9 +3,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <bit>
+#include <ostream>
+#include <string_view>
 #include <vector>
 
 namespace mkii::native {
+#if __has_include("GeneratedSolve.hpp")
+#include "GeneratedSolve.hpp"
+#endif
 
 // Choose and factor the symbolic pattern at prepareToPlay. The audio thread
 // reuses a fixed elimination schedule with no searches, allocation or fill-in.
@@ -35,6 +41,7 @@ public:
     bool prepare() {
         rows.clear();
         updates.clear();
+        activePivots.clear();
         std::vector<bool> liveRows(size, true), liveColumns(size, true);
         for (int step = 0; step < size; ++step) {
             std::vector<int> rowCount(size, 0), colCount(size, 0);
@@ -109,7 +116,61 @@ public:
         return true;
     }
 
-    void cacheLinearPart() { fixed = entries; }
+    void cacheLinearPart(const std::vector<int>& mutableSlots) {
+        std::vector<bool> dynamic(entries.size(),false);
+        for (const int slot : mutableSlots) dynamic[slot]=true;
+        runtime.clear();
+        activeUpdates.clear();
+        int nextUpdate=0;
+        for (const auto& s : plan) {
+            const bool pivotChanges=dynamic[s.pivot];
+            const double reciprocal=pivotChanges?0:1/entries[s.pivot];
+            const int begin=static_cast<int>(runtime.size());
+            for (int j=s.lowerBegin;j<s.lowerEnd;++j) {
+                const auto& row=lowers[j];
+                const bool factorChanges=pivotChanges||dynamic[row.slot];
+                const double factor=factorChanges?0:entries[row.slot]*reciprocal;
+                const int first=static_cast<int>(activeUpdates.size());
+                for (int k=s.upperBegin;k<s.upperEnd;++k) {
+                    const int target=updates[nextUpdate++];
+                    const int source=uppers[k].slot;
+                    if (!factorChanges && !dynamic[source]) entries[target]-=factor*entries[source];
+                    else {
+                        dynamic[target]=true;
+                        activeUpdates.push_back({target,source});
+                    }
+                }
+                runtime.push_back({row.index,row.slot,first,static_cast<int>(activeUpdates.size()),
+                                   factor,factorChanges});
+            }
+            activePivots.push_back({s.row,s.pivot,begin,static_cast<int>(runtime.size()),
+                                    reciprocal,pivotChanges});
+        }
+        fixed=entries;
+        signature=0xcbf29ce484222325ULL;
+        const auto add=[&](std::uint64_t value) {
+            signature^=value;
+            signature*=0x100000001b3ULL;
+        };
+        for (const auto& row : activePivots) {
+            for (int v : {row.row,row.pivot,row.begin,row.end}) add(v);
+            add(row.changes);
+            add(std::bit_cast<std::uint64_t>(row.reciprocal));
+        }
+        for (const auto& row : runtime) {
+            for (int v : {row.index,row.slot,row.first,row.last}) add(v);
+            add(row.changes);
+            add(std::bit_cast<std::uint64_t>(row.factor));
+        }
+        for (const auto& e : activeUpdates) {add(e.index);add(e.slot);}
+        for (const auto& s : plan) {
+            for (int v : {s.row,s.column,s.pivot,s.upperBegin,s.upperEnd}) add(v);
+        }
+        for (const auto& e : uppers) {add(e.index);add(e.slot);}
+#if __has_include("GeneratedSolve.hpp")
+        generated=findGeneratedSolve(signature);
+#endif
+    }
 
     void startIteration(const std::vector<double>& initial) {
         std::copy(fixed.begin(),fixed.end(),entries.begin());
@@ -121,22 +182,65 @@ public:
         std::fill(rhs.begin(), rhs.end(), 0.0);
     }
 
+    void emit(std::ostream& code,std::string_view name) const {
+        code<<"inline constexpr std::uint64_t signature_"<<name<<'='<<signature<<"ULL;\n";
+        code<<"inline bool solve_"<<name<<"(double* __restrict a,double* __restrict b,double* __restrict x) {\n";
+        code<<"    double u=0,v=0;\n";
+        for (const auto& s : activePivots) {
+            if (s.changes) {
+                code<<"    u=a["<<s.pivot<<"]; if (std::abs(u)<1e-17 || !std::isfinite(u)) return false; "
+                    <<"u=1/u; a["<<s.pivot<<"]=u;\n";
+            }
+            for (int j=s.begin;j<s.end;++j) {
+                const auto& row=runtime[j];
+                if (row.changes) {
+                    code<<"    v=a["<<row.slot<<"]*";
+                    if (s.changes) code<<"u";
+                    else code<<std::hexfloat<<s.reciprocal<<std::defaultfloat;
+                    code<<";\n";
+                }
+                else if (row.factor == 0) continue;
+                else code<<"    v="<<std::hexfloat<<row.factor<<std::defaultfloat<<";\n";
+                code<<"    b["<<row.index<<"]-=v*b["<<s.row<<"];\n";
+                for (int k=row.first;k<row.last;++k)
+                    code<<"    a["<<activeUpdates[k].index<<"]-=v*a["<<activeUpdates[k].slot<<"];\n";
+            }
+        }
+        for (auto s=plan.rbegin();s!=plan.rend();++s) {
+            code<<"    v=b["<<s->row<<"];\n";
+            for (int k=s->upperBegin;k<s->upperEnd;++k)
+                code<<"    v-=a["<<uppers[k].slot<<"]*x["<<uppers[k].index<<"];\n";
+            const auto& forward=activePivots[static_cast<std::size_t>((s+1).base()-plan.begin())];
+            if (forward.changes) code<<"    x["<<s->column<<"]=v*a["<<s->pivot<<"];\n";
+            else code<<"    x["<<s->column<<"]=v*"<<std::hexfloat<<forward.reciprocal
+                     <<std::defaultfloat<<";\n";
+            code<<"    if (!std::isfinite(x["<<s->column<<"])) return false;\n";
+        }
+        code<<"    return true;\n}\n";
+    }
+
     bool solve() {
-        int offset=0;
+#if __has_include("GeneratedSolve.hpp")
+        if (generated) return generated(entries.data(),rhs.data(),x.data());
+#endif
         const auto* upper=uppers.data();
-        const auto* lower=lowers.data();
         auto* values=entries.data();
         auto* vector=rhs.data();
-        for (const auto& s : plan) {
-            const double pivot=values[s.pivot];
-            if (std::abs(pivot)<1e-17 || !std::isfinite(pivot)) return false;
-            const double inv=1.0/pivot;
-            values[s.pivot]=inv;
-            for (int j=s.lowerBegin;j<s.lowerEnd;++j) {
-                const double factor=values[lower[j].slot]*inv;
-                vector[lower[j].index]-=factor*vector[s.row];
-                for (int k=s.upperBegin;k<s.upperEnd;++k)
-                    values[updates[offset++]]-=factor*values[upper[k].slot];
+        for (const auto& s : activePivots) {
+            double reciprocal=s.reciprocal;
+            if (s.changes) {
+                const double pivot=values[s.pivot];
+                if (std::abs(pivot)<1e-17 || !std::isfinite(pivot)) return false;
+                reciprocal=1.0/pivot;
+            }
+            values[s.pivot]=reciprocal;
+            const double y=vector[s.row];
+            for (int j=s.begin;j<s.end;++j) {
+                const auto& row=runtime[j];
+                const double factor=row.changes?values[row.slot]*reciprocal:row.factor;
+                vector[row.index]-=factor*y;
+                for (int k=row.first;k<row.last;++k)
+                    values[activeUpdates[k].index]-=factor*values[activeUpdates[k].slot];
             }
         }
         for (auto s=plan.rbegin();s!=plan.rend();++s) {
@@ -156,7 +260,7 @@ public:
     }
     void addSlot(int slot,double value) { entries[slot]+=value; }
 
-    int operationCount() const { return static_cast<int>(updates.size()); }
+    int operationCount() const { return static_cast<int>(activeUpdates.size()); }
     std::vector<double> rhs, x;
 
 private:
@@ -169,13 +273,21 @@ private:
     bool has(int row, int col) const { return at(row,col) >= 0; }
     double& v(int row, int col) { return dense[row*size+col]; }
 
+    std::uint64_t signature=0;
+#if __has_include("GeneratedSolve.hpp")
+    bool (*generated)(double*,double*,double*)=nullptr;
+#endif
     int size = 0;
     bool ready = false;
     std::vector<int> lookup, updates;
     std::vector<Row> rows;
     struct Pivot { int row,column,pivot,upperBegin,upperEnd,lowerBegin,lowerEnd; };
     std::vector<Pivot> plan;
-    std::vector<Terminal> uppers,lowers;
+    struct ActiveLower { int index,slot,first,last;double factor;bool changes; };
+    struct ActivePivot { int row,pivot,begin,end;double reciprocal;bool changes; };
+    std::vector<ActiveLower> runtime;
+    std::vector<ActivePivot> activePivots;
+    std::vector<Terminal> uppers,lowers,activeUpdates;
     std::vector<double> dense, entries, fixed;
 };
 }

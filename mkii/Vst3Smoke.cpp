@@ -4,6 +4,65 @@
 #include <cmath>
 #include <iostream>
 
+#ifdef MKII_NATIVE
+#include "native/Pipeline.hpp"
+
+#include <chrono>
+#include <numbers>
+#include <vector>
+
+bool testNativePlayback(juce::AudioPluginInstance& plugin,int channels) {
+    using mkii::native::Pipeline;
+    using Clock=std::chrono::steady_clock;
+    constexpr int rate=44100, quantum=128, frames=12288;
+    std::vector<std::vector<float>> expected(channels);
+    for (int c=0;c<channels;++c) {
+        mkii::native::Solver reference;
+        if (!reference.prepare(rate)) return false;
+        expected[c].resize(frames);
+        for (int i=0;i<frames;++i) {
+            const auto input=static_cast<float>(0.09*std::sin(2*std::numbers::pi*(1000+c*301)*i/rate));
+            expected[c][i]=static_cast<float>(reference.step(input,0.2f,4,0));
+        }
+        if (reference.failures()!=0) return false;
+    }
+
+    plugin.setNonRealtime(false);
+    plugin.prepareToPlay(rate,quantum);
+    const int latency=plugin.getLatencySamples();
+    if (latency!=Pipeline::latency) {
+        std::cerr<<"Unexpected VST3 latency: "<<latency<<std::endl;
+        return false;
+    }
+    juce::AudioBuffer<float> audio(channels,quantum);
+    juce::MidiBuffer midi;
+    double maxError=0,maxCallbackMs=0;
+    const auto start=Clock::now();
+    for (int offset=0;offset<frames+latency;offset+=quantum) {
+        for (int c=0;c<channels;++c)
+            for (int i=0;i<quantum;++i)
+                audio.setSample(c,i,static_cast<float>(0.09*std::sin(2*std::numbers::pi*(1000+c*301)*(offset+i)/rate)));
+        const auto due=start+std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(double(offset)/rate));
+        std::this_thread::sleep_until(due);
+        const auto begin=Clock::now();
+        plugin.processBlock(audio,midi);
+        maxCallbackMs=std::max(maxCallbackMs,std::chrono::duration<double,std::milli>(Clock::now()-begin).count());
+        for (int c=0;c<channels;++c) {
+            for (int i=0;i<quantum;++i) {
+                const int sample=offset+i-latency;
+                const auto value=audio.getSample(c,i);
+                if (!std::isfinite(value)) return false;
+                const double target=sample<0?0:expected[c][sample];
+                maxError=std::max(maxError,std::abs(value-target));
+            }
+        }
+    }
+    std::cout<<"Live playback with "<<channels<<" channel(s), latency "<<latency
+             <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs<<" ms"<<std::endl;
+    return maxError<0.00002 && maxCallbackMs<quantum*1000.0/rate;
+}
+#endif
+
 int main(int argc, char** argv) {
     std::cout << "Starting Windows VST3 smoke test" << std::endl;
     if (argc != 2) return 2;
@@ -35,6 +94,9 @@ int main(int argc, char** argv) {
             std::cerr << "The VST3 rejected the bus arrangement" << std::endl;
             return 5;
         }
+#ifdef MKII_NATIVE
+        if (!testNativePlayback(*plugin,layout.size())) return 9;
+#else
         plugin->setNonRealtime(false);
         plugin->prepareToPlay(44100, 256);
         juce::AudioBuffer<float> audio(layout.size(), 256);
@@ -71,8 +133,13 @@ int main(int argc, char** argv) {
                 return 8;
             }
         }
+#endif
     }
     plugin->releaseResources();
+#ifdef MKII_NATIVE
+    std::cout<<"Windows native VST3 passed live mono and stereo playback\n";
+#else
     std::cout << "Windows VST3 offline circuit render passed in mono and stereo\n";
+#endif
     return 0;
 }

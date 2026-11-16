@@ -1,4 +1,4 @@
-#include "Circuit.hpp"
+#include "Pipeline.hpp"
 
 #include <algorithm>
 #include <array>
@@ -58,6 +58,39 @@ Result measure(double rate,bool stress,int channel) {
     return result;
 }
 
+bool playback(double rate,int channels) {
+    mkii::native::Pipeline engine;
+    if (!engine.prepare(rate,channels)) return false;
+    using Clock=std::chrono::steady_clock;
+    const auto begin=Clock::now();
+    double peakMs=0,energy=0;
+    unsigned lateCallbacks=0;
+    std::array<std::array<float,blockSize>,2> audio{};
+    std::array<float*,2> pointers{audio[0].data(),audio[1].data()};
+    const int blocks=static_cast<int>(3.0*rate/blockSize);
+    for (int b=0;b<blocks;++b) {
+        for (int c=0;c<channels;++c)
+            for (int n=0;n<blockSize;++n)
+                audio[c][n]=static_cast<float>(signal(b*blockSize+n,rate,true,c));
+        const auto scheduled=begin+std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(b*blockSize/rate));
+        std::this_thread::sleep_until(scheduled);
+        const auto callback=Clock::now();
+        engine.process(pointers.data(),blockSize,{});
+        const double ms=std::chrono::duration<double,std::milli>(Clock::now()-callback).count();
+        peakMs=std::max(peakMs,ms);
+        lateCallbacks+=ms>blockSize*1000/rate;
+        for (int c=0;c<channels;++c)
+            for (auto v : audio[c]) energy+=v*v;
+    }
+    const auto missed=engine.missedSamples();
+    const auto failures=engine.failedSolves();
+    std::printf("%.0f Hz, %d channel(s), 128-sample callback max %.3f ms, "
+                "late callbacks %u, late samples %llu, failed solves %u, output energy %.6f\n",
+                rate,channels,peakMs,lateCallbacks,static_cast<unsigned long long>(missed),failures,energy);
+    return !lateCallbacks && !missed && !failures && std::isfinite(energy) && energy>0.1;
+}
+
 int capture() {
     Solver solver;
     if (!solver.prepare(targetRate)) return 2;
@@ -73,6 +106,12 @@ int capture() {
 int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--capture")==0) return capture();
     const bool gate=argc==2 && std::strcmp(argv[1],"--gate")==0;
+    if (argc==2 && std::strcmp(argv[1],"--playback")==0) {
+        bool pass=true;
+        for (const double rate : {44100.,48000.})
+            for (const int channels : {1,2}) pass=playback(rate,channels) && pass;
+        return pass?0:4;
+    }
     bool pass=true;
     for (const double rate : {44100.,48000.}) {
         for (const bool stress : {false,true}) {

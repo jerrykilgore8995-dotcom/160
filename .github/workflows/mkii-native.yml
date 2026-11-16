@@ -1,4 +1,4 @@
-name: 160 MKII native solver qualification
+name: 160 MKII native real-time Windows VST3
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   native:
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +37,10 @@ jobs:
           g++ -std=c++20 -O2 mkii/SpiceWorker.cpp -lngspice -o staging/Circuit/reference.exe
           cp /ucrt64/lib/ngspice/spice2poly.cm staging/Circuit/
           python mkii/native/prepare.py staging/Circuit/reference.exe staging/Circuit staging/generated/Deck.hpp
-          g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -pthread -I staging/generated mkii/native/Probe.cpp -o staging/native.exe
+          mkdir -p staging/schedule
+          g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -I staging/generated mkii/native/GenerateSolve.cpp -o staging/generate-solve.exe
+          staging/generate-solve.exe staging/schedule/GeneratedSolve.hpp
+          g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -pthread -I staging/generated -I staging/schedule mkii/native/Probe.cpp -o staging/native.exe
           if objdump -p staging/native.exe | grep -i 'DLL Name:.*ngspice'; then exit 1; fi
       - name: Measure parity at 1 kHz
         shell: msys2 {0}
@@ -45,6 +48,31 @@ jobs:
           set -euo pipefail
           staging/native.exe --capture > staging/native-1kHz.dat
           python mkii/verify_stream.py staging/Circuit/reference.exe staging/Circuit staging/native-parity.json staging/native-1kHz.dat
-      - name: Check the 128-sample callback budget
+      - name: Check paced mono and stereo playback
         shell: msys2 {0}
-        run: staging/native.exe --gate
+        run: |
+          set -euo pipefail
+          staging/native.exe --playback | tee staging/native-playback.txt
+      - name: Build Windows VST3 and test host
+        shell: pwsh
+        run: |
+          $deck = (Resolve-Path "staging/generated").Path
+          cmake -S mkii -B build-native -A x64 "-DMKII_NATIVE_DECK_DIR=$deck"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build-native --config Release --target Circuit160_VST3 Vst3Smoke --parallel 4
+      - name: Verify normal VST3 playback and package the bundle
+        shell: pwsh
+        run: |
+          $vst = (Resolve-Path "build-native/Circuit160_artefacts/Release/VST3/160 MKII.vst3").Path
+          $hostTest = (Resolve-Path "build-native/Vst3Smoke_artefacts/Release/Vst3Smoke.exe").Path
+          $test = Start-Process -FilePath $hostTest -ArgumentList "`"$vst`"" -NoNewWindow -PassThru -Wait -RedirectStandardOutput smoke-out.txt -RedirectStandardError smoke-err.txt
+          Get-Content smoke-out.txt,smoke-err.txt
+          if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $vst release -Recurse
+          Copy-Item staging/native-parity.json,staging/native-playback.txt,mkii/native/README.md release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 160-MKII-0.1-Windows-x64-VST3-Native
+          path: release
+          if-no-files-found: error

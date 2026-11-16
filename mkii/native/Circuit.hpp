@@ -120,6 +120,7 @@ public:
         matrix.resize(deck.size);
         // Include the transient structure in the symbolic factorization.
         // The actual initial solve below uses zero integration conductance.
+        hostRate=rate;
         inverse = 1.5*rate;
         history1 = -2.0*rate;
         history2 = 0.5*rate;
@@ -132,42 +133,26 @@ public:
         inverse = 1.5*rate;
         history1 = -2.0*rate;
         history2 = 0.5*rate;
+        savedNodes.resize(deck.size);
+        savedHistory.resize(deck.capacitors.size()+deck.diodes.size()+2*deck.bjts.size());
         misses = 0;
+        subdivisions=0;
         lastInput=0;
         return true;
     }
 
     double step(double input, double threshold, double ratio, double makeup) {
         supply(input,threshold,ratio,makeup);
-        std::copy(constantRhs.begin(),constantRhs.end(),sampleRhs.begin());
-        for (const auto& d : deck.capacitors) {
-            const double charge = history1*d.q1+history2*d.q2;
-            if (d.a>=0) sampleRhs[d.a]-=charge;
-            if (d.b>=0) sampleRhs[d.b]+=charge;
-        }
+        prepareHistory();
         std::copy(previous.begin(),previous.end(),x.begin());
-        bool solved=newton(12,0.16);
-        // Change the source in a few stages if a transient leaves Newton's
-        // attraction basin. Keep the BDF2 history fixed until the actual
-        // sample is solved so intermediate iterations do not advance time.
-        for (const int substeps : {2,4,8}) {
-            if (solved) break;
-            std::copy(previous.begin(), previous.end(), x.begin());
-            solved=true;
-            for (int i=1;i<=substeps;++i) {
-                supply(std::lerp(lastInput,input,static_cast<double>(i)/substeps),
-                       threshold,ratio,makeup);
-                if (!newton(16,0.16)) {
-                    solved=false;
-                    break;
-                }
-            }
-        }
-        if (solved) {
+        if (newton(12,0.16) || continueSource(input,threshold,ratio,makeup)) {
             accept(false);
             lastInput=input;
+        } else if (retry(input,threshold,ratio,makeup)) {
+            lastInput=input;
+            ++subdivisions;
         } else {
-            std::copy(previous.begin(), previous.end(), x.begin());
+            std::copy(previous.begin(),previous.end(),x.begin());
             ++misses;
         }
         return x[deck.out]/fullScalePeakVolts;
@@ -176,10 +161,83 @@ public:
     double controlVolts() const { return x[deck.control]; }
     double levelVolts() const { return x[deck.level]; }
     int operations() const { return matrix.operationCount(); }
+    void emitSolver(std::ostream& code,std::string_view name) const {matrix.emit(code,name);}
     unsigned failures() const { return misses; }
+    unsigned refinedSamples() const { return subdivisions; }
     double rawOutput() const { return x[deck.out]; }
 
 private:
+    struct History { double previous, older; };
+
+    template<class Operation>
+    void visitHistory(Operation operation) {
+        std::size_t at=0;
+        for (auto& d : deck.capacitors) operation(savedHistory[at++],d.q1,d.q2);
+        for (auto& d : deck.diodes) operation(savedHistory[at++],d.q1,d.q2);
+        for (auto& d : deck.bjts) {
+            operation(savedHistory[at++],d.f1,d.f2);
+            operation(savedHistory[at++],d.r1,d.r2);
+        }
+    }
+
+    void prepareHistory() {
+        std::copy(constantRhs.begin(),constantRhs.end(),sampleRhs.begin());
+        for (const auto& term : knownTerms)
+            sampleRhs[term.row]+=term.g*fixed[term.column];
+        for (const auto& d : deck.capacitors) {
+            const double charge=history1*d.q1+history2*d.q2;
+            if (d.a>=0) sampleRhs[d.a]-=charge;
+            if (d.b>=0) sampleRhs[d.b]+=charge;
+        }
+    }
+
+    bool continueSource(double input,double threshold,double ratio,double makeup) {
+        // Try a numerical continuation before changing the time integration.
+        for (int count : {2,4,8}) {
+            std::copy(previous.begin(),previous.end(),x.begin());
+            int i=1;
+            for (;i<=count;++i) {
+                supply(std::lerp(lastInput,input,static_cast<double>(i)/count),threshold,ratio,makeup);
+                if (!newton(16,0.16)) break;
+            }
+            if (i>count) return true;
+        }
+        return false;
+    }
+
+    bool retry(double input,double threshold,double ratio,double makeup) {
+        std::copy(previous.begin(),previous.end(),savedNodes.begin());
+        visitHistory([](History& save,double& q1,double& q2){save={q1,q2};});
+        const auto restore=[&] {
+            std::copy(savedNodes.begin(),savedNodes.end(),previous.begin());
+            std::copy(savedNodes.begin(),savedNodes.end(),x.begin());
+            visitHistory([](const History& save,double& q1,double& q2){q1=save.previous;q2=save.older;});
+        };
+        bool solved=false;
+        // Advance physical time with backward Euler on the shorter steps.
+        // The next host sample resumes BDF2 with history on the host grid.
+        for (int count : {2,4,8,16,32,64}) {
+            restore();
+            inverse=count*hostRate;
+            history1=-inverse;
+            history2=0;
+            solved=true;
+            for (int i=1;i<=count;++i) {
+                supply(std::lerp(lastInput,input,static_cast<double>(i)/count),threshold,ratio,makeup);
+                prepareHistory();
+                if (!newton(14,0.16)) {solved=false;break;}
+                accept(false);
+            }
+            if (solved) break;
+        }
+        if (solved) visitHistory([](const History& save,double&,double& q2){q2=save.previous;});
+        else restore();
+        inverse=1.5*hostRate;
+        history1=-2.0*hostRate;
+        history2=0.5*hostRate;
+        return solved;
+    }
+
     double v(int k) const { return k<0 ? fixed[-k-1] : x[k]; }
     void current(int a,int b,double i) {
         // The linear system solves for the negative residual.
@@ -270,8 +328,9 @@ private:
         constantRhs.assign(n,0);
         sampleRhs.resize(n);
         ratioResistors.clear();
-        rowOffsets.assign(n+1,0);
         terms.clear();
+        knownTerms.clear();
+        linearRows.clear();
         matrix.clear();
         const auto bind = [&](int row,int col,double g) {
             if (row<0) return;
@@ -301,22 +360,41 @@ private:
             dc(d.k,-1,-d.value);
         }
         for (const auto& d : deck.controlled) branch(d.a,d.b,d.p,d.m,d.gain);
-        matrix.cacheLinearPart();
+        std::vector<int> mutableSlots;
+        for (const auto& d : deck.diodes) mutableSlots.insert(mutableSlots.end(),d.slots.begin(),d.slots.end());
+        for (const auto& d : deck.bjts) mutableSlots.insert(mutableSlots.end(),d.slots.begin(),d.slots.end());
+        for (const auto& d : deck.jfets) mutableSlots.insert(mutableSlots.end(),d.slots.begin(),d.slots.end());
+        const auto capacitanceOrRatio=[&](int a,int b) {
+            for (int r : {a,b}) for (int c : {a,b}) mutableSlots.push_back(matrix.slot(r,c));
+        };
+        for (const auto& d : ratioResistors) capacitanceOrRatio(d.a,d.b);
+        for (const auto& d : deck.capacitors) capacitanceOrRatio(d.a,d.b);
+        matrix.cacheLinearPart(mutableSlots);
         for (int row=0;row<n;++row) {
-            for (int col=0;col<columns;++col) if (const auto g=dense[row*columns+col];g!=0)
-                terms.push_back({col<n?col:n-col-1,g});
-            rowOffsets[row+1]=static_cast<int>(terms.size());
+            const auto begin=static_cast<int>(terms.size());
+            for (int col=0;col<columns;++col) {
+                const double g=dense[row*columns+col];
+                if (g!=0) {
+                    if (col<n) terms.push_back({col,g});
+                    else knownTerms.push_back({row,col-n,g});
+                }
+            }
+            const auto end=static_cast<int>(terms.size());
+            if (begin!=end) linearRows.push_back({row,begin,end});
         }
     }
 
     void stampStep() {
         matrix.startIteration(sampleRhs);
-        for (int row=0;row<deck.size;++row) {
-            double sum=matrix.rhs[row];
-            for (int j=rowOffsets[row];j<rowOffsets[row+1];++j)
-                sum += terms[j].g*v(terms[j].column);
-            matrix.rhs[row]=sum;
+        for (const auto& row : linearRows) {
+            double sum=matrix.rhs[row.row];
+            for (int j=row.begin;j<row.end;++j)
+                sum+=terms[j].g*x[terms[j].column];
+            matrix.rhs[row.row]=sum;
         }
+        const double delta=inverse-1.5*hostRate;
+        if (delta!=0)
+            for (const auto& d : deck.capacitors) conduct(d.a,d.b,delta*d.value);
         for (const auto& d : ratioResistors) conduct(d.a,d.b,ratioG);
         stampNonlinear<false>();
     }
@@ -442,12 +520,17 @@ private:
     Circuit deck;
     std::vector<R> ratioResistors;
     std::vector<Term> terms;
-    std::vector<int> rowOffsets;
+    struct KnownTerm {int row,column;double g;};
+    struct LinearRow {int row,begin,end;};
+    std::vector<KnownTerm> knownTerms;
+    std::vector<LinearRow> linearRows;
     std::vector<double> constantRhs,sampleRhs;
     Sparse matrix;
-    std::vector<double> x,previous,fixed;
+    std::vector<double> x,previous,fixed,savedNodes;
+    std::vector<History> savedHistory;
     double inverse=0,history1=0,history2=0,ratioG=0;
     double lastThreshold=0,lastRatio=0,thresholdVolts=0,lastInput=0;
-    unsigned misses=0;
+    double hostRate=0;
+    unsigned misses=0,subdivisions=0;
 };
 }
