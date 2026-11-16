@@ -7,7 +7,7 @@ on:
 jobs:
   timing:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -28,31 +28,33 @@ jobs:
               s=re.sub(r'THRESHV=[^ ]+',f'THRESHV={th}',base)
               for n,node,sgn in [('VINP','IN_PLUS',1),('VINM','IN_MINUS',-1)]:
                   s=re.sub(r'^'+n+r' .*$',f'B{n} {node} 0 V={sgn*.5}*v(amp)*sin(2*pi*1000*time)',s,flags=re.M)
-              s+='\nVAMP amp 0 PWL(0 .05 .5 .05 .500001 1 1.5 1 1.500001 .05 2.3 .05)\n'
+              s+='\nVAMP amp 0 PWL(0 .2 1 .2 1.000001 1 2 1 2.000001 .2 3 .2)\n'
               p=out/(name+'.cir');raw=out/(name+'.tsv')
-              p.write_text(s+f'\n.control\nset wr_singlescale\nset wr_vecnames\ntran 5u 2.3 0 5u\nwrdata {raw} v(out_plus) v(ec_minus) v(amp)\nquit\n.endc\n.end\n')
+              p.write_text(s+f'\n.control\nset wr_singlescale\nset wr_vecnames\ntran 5u 3 0 5u\nwrdata {raw} v(out_plus) v(ec_minus) v(amp)\nquit\n.endc\n.end\n')
               with (out/(name+'.log')).open('w') as l:subprocess.run(['ngspice','-b',str(p)],stdout=l,stderr=subprocess.STDOUT,check=True)
-              a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>2.299
-              t=np.arange(0,2.3,1e-5);y=np.interp(t,a[:,0],a[:,1]).reshape(-1,100); tt=t.reshape(-1,100)[:,0]+.0005
+              a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>2.999
+              t=np.arange(0,3,1e-5);y=np.interp(t,a[:,0],a[:,1]).reshape(-1,100); tt=t.reshape(-1,100)[:,0]+.0005
               ph=2*np.pi*np.arange(100)/100
               mag=2*np.hypot(y@np.cos(ph),y@np.sin(ph))/100
-              amp=np.where((tt>.5)&(tt<1.5),1,.05)
+              amp=np.where((tt>1)&(tt<2),1,.2)
               gain=20*np.log10(np.maximum(mag/amp,1e-20))
-              lo=np.median(gain[(tt>.40)&(tt<.49)]); hi=np.median(gain[(tt>1.40)&(tt<1.49)])
+              lo=np.median(gain[(tt>.85)&(tt<.99)]); hi=np.median(gain[(tt>1.85)&(tt<1.99)])
               gr=lo-hi
               print(name,'threshold',th,'settled_GR',gr,flush=True)
               np.savetxt(out/(name+'_envelope.csv'),np.c_[tt,lo-gain],delimiter=',',header='seconds,GR_dB')
               return gr,tt,lo-gain
-          th=.15
-          for i in range(5):
+          lo_th,hi_th=.145,.4
+          for i in range(12):
+              th=(lo_th*hi_th)**.5
               gr,t,y=run('trial'+str(i),th)
               if abs(gr-10)<.03:break
-              th*=10**((gr-10)/15)
+              if gr>10:lo_th=th
+              else:hi_th=th
           if abs(gr-10)>=.03:raise SystemExit('10 dB calibration failed')
           def cross(start,end,target,up):
               ix=np.where((t>=start)&(t<end)&((y>=target) if up else (y<=target)))[0]
               return float((t[ix[0]]-start)*1000) if len(ix) else float('nan')
-          print('FINAL actual_GR_dB',gr,'attack_63_percent_ms',cross(.501,1.5,.632*gr,True)+1,'release_63_percent_ms',cross(1.501,2.3,.368*gr,False)+1,'release_to_0.1dB_ms',cross(1.501,2.3,.1,False)+1,flush=True)
+          print('FINAL actual_GR_dB',gr,'attack_63_percent_ms',cross(1.001,2,.632*gr,True)+1,'release_63_percent_ms',cross(2.001,3,.368*gr,False)+1,'release_to_0.1dB_ms',cross(2.001,3,.1,False)+1,flush=True)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
