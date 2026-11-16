@@ -1,6 +1,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <cmath>
 #include <iostream>
 
@@ -55,6 +56,45 @@ bool testMakeupMeter(const juce::String& dllPath) {
         && std::abs(active.gainReductionDb-activeBoost.gainReductionDb)<0.1f
         && std::abs(10*std::log10(activeBoost.inputMeanSquare/active.inputMeanSquare))<0.2f
         && std::abs(10*std::log10(activeBoost.outputMeanSquare/active.outputMeanSquare)-10)<0.8f;
+}
+
+bool testFrequencyResponse(juce::AudioPluginInstance& plugin,int rate) {
+    constexpr int blockSize=512;
+    constexpr float inputPeak=0.01f;
+    constexpr std::array frequencies{1000,30,50,100,200,500,2000,5000,7000,9000,10000,11000,
+                                     12000,13000,14000,15000,16000,17000,18000,19000,20000};
+    plugin.setNonRealtime(true);
+    juce::AudioBuffer<float> audio(1,blockSize);
+    juce::MidiBuffer midi;
+    double reference=0;
+    bool passed=true;
+    for (const int frequency:frequencies) {
+        plugin.releaseResources();
+        plugin.prepareToPlay(rate,blockSize);
+        const int start=plugin.getLatencySamples()+rate/10;
+        const int end=start+rate/5;
+        const double cycles=2*std::numbers::pi*frequency/rate;
+        double sine=0,cosine=0;
+        for (int offset=0;offset<end;offset+=blockSize) {
+            for (int n=0;n<blockSize;++n)
+                audio.setSample(0,n,inputPeak*std::sin(cycles*(offset+n)));
+            plugin.processBlock(audio,midi);
+            for (int n=std::max(0,start-offset);n<std::min(blockSize,end-offset);++n) {
+                const double phase=cycles*(offset+n);
+                const double output=audio.getSample(0,n);
+                sine+=output*std::sin(phase);
+                cosine+=output*std::cos(phase);
+            }
+        }
+        const double magnitude=std::hypot(sine,cosine);
+        if (frequency==1000) reference=magnitude;
+        const double db=20*std::log10(magnitude/reference);
+        std::cout<<"Response, "<<rate<<" Hz sample rate, "<<frequency
+                 <<" Hz tone, "<<db<<" dB relative to 1 kHz"<<std::endl;
+        passed=std::isfinite(db) && std::abs(db)<=1.0 && passed;
+    }
+    plugin.releaseResources();
+    return passed;
 }
 
 bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds,bool cymbals=false) {
@@ -194,6 +234,10 @@ int main(int argc, char** argv) {
             return 5;
         }
 #ifdef MKII_NATIVE
+        if (layout.size()==1) {
+            for (const int rate:{44100,48000,96000})
+                playbackPassed=testFrequencyResponse(*plugin,rate) && playbackPassed;
+        }
         for (const int rate : {44100,48000}) {
             plugin->releaseResources();
             playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),rate,layout.size(),128,3) && playbackPassed;
