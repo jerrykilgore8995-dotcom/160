@@ -1,0 +1,21 @@
+name: Import official THAT VCA models
+on: [push, workflow_dispatch]
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download manufacturer archive
+        run: |
+          curl --fail --location --retry 4 'https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip' -o that.zip
+          unzip -t that.zip
+          mkdir -p manufacturer
+          unzip -o that.zip -d manufacturer
+          sha256sum that.zip > manufacturer/archive.sha256
+          find manufacturer -type f
+          grep -riE '^\s*\.subckt.*(2181|2180|2150|2252)' manufacturer > manufacturer/subcircuits.txt
+          cat manufacturer/subcircuits.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Official-THAT-models
+          path: manufacturer/
