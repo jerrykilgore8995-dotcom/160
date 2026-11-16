@@ -13,8 +13,11 @@ jobs:
           unzip -o that.zip -d manufacturer
           sha256sum that.zip > manufacturer/archive.sha256
           find manufacturer -type f
-          grep -riE '^\s*\.subckt.*(2181|2180|2150|2252)' manufacturer > manufacturer/subcircuits.txt
+          grep -riE --include='*.lib' '^\s*\.subckt' manufacturer > /tmp/subcircuits.txt
+          mv /tmp/subcircuits.txt manufacturer/subcircuits.txt
           cat manufacturer/subcircuits.txt
+          cat manufacturer/2181_Macro_01.lib
+          cat manufacturer/4301_Macro_01.lib
       - uses: actions/upload-artifact@v4
         with:
           name: Official-THAT-models
