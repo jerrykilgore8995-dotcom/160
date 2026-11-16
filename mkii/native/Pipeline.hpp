@@ -26,7 +26,7 @@ struct Controls {
 // The callback submits and reads samples without locking or waiting in live mode.
 class Pipeline {
 public:
-    static constexpr int latency = 2048;
+    static constexpr int latency = 3072;
     static constexpr std::uint64_t capacity = 16384;
     static_assert((capacity & (capacity-1))==0);
 
@@ -40,7 +40,7 @@ public:
         if (channels<1 || channels>2) return false;
         for (int i=0;i<channels;++i) {
             auto& v=voices[i];
-            if (!v.solver.prepare(rate)) return false;
+            if (!v.solver.prepare(rate) || !v.prepareWake()) return false;
             v.written.store(0,std::memory_order_relaxed);
             v.completed.store(0,std::memory_order_relaxed);
             v.failed.store(0,std::memory_order_relaxed);
@@ -61,7 +61,7 @@ public:
         for (int i=0;i<active;++i) {
             auto& published=voices[i].written;
             published.store(stopSignal,std::memory_order_release);
-            published.notify_one();
+            voices[i].wake();
         }
         for (int i=0;i<active;++i)
             if (voices[i].worker.joinable()) voices[i].worker.join();
@@ -96,7 +96,7 @@ public:
             for (int c=0;c<active;++c) {
                 auto& published=voices[c].written;
                 published.store(position+frames,std::memory_order_release);
-                published.notify_one();
+                voices[c].wake();
             }
             control=0;
             for (int c=0;c<active;++c) {
@@ -146,6 +146,31 @@ private:
     struct Input {float value=0;Controls settings;};
     struct Output {float value=0,control=0;};
     struct Voice {
+        ~Voice() {
+#ifdef _WIN32
+            if (event) CloseHandle(event);
+#endif
+        }
+        bool prepareWake() {
+#ifdef _WIN32
+            if (!event) event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+            return event!=nullptr;
+#else
+            return true;
+#endif
+        }
+        void wake() {
+#ifdef _WIN32
+            SetEvent(event);
+#endif
+        }
+        void waitForInput() {
+#ifdef _WIN32
+            WaitForSingleObject(event,INFINITE);
+#else
+            std::this_thread::sleep_for(std::chrono::microseconds(75));
+#endif
+        }
         void run() {
 #ifdef _WIN32
             SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_ABOVE_NORMAL);
@@ -155,7 +180,7 @@ private:
                 const auto published=written.load(std::memory_order_acquire);
                 if (published==stopSignal) return;
                 if (published==next) {
-                    written.wait(next,std::memory_order_acquire);
+                    waitForInput();
                     continue;
                 }
                 const auto end=std::min(next+32,published);
@@ -177,6 +202,9 @@ private:
         alignas(64) std::atomic<std::uint64_t> completed{0};
         std::atomic<unsigned> failed{0};
         std::thread worker;
+#ifdef _WIN32
+        HANDLE event=nullptr;
+#endif
     };
     std::array<Voice,2> voices;
     int active=0;

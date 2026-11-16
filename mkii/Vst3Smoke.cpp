@@ -6,22 +6,31 @@
 
 #ifdef MKII_NATIVE
 #include "native/Pipeline.hpp"
+#include "native/PlaybackClock.hpp"
 
 #include <chrono>
 #include <numbers>
 #include <vector>
 
-bool testNativePlayback(juce::AudioPluginInstance& plugin,int channels) {
+bool testNativePlayback(juce::AudioPluginInstance& plugin,int rate,int channels) {
     using mkii::native::Pipeline;
     using Clock=std::chrono::steady_clock;
-    constexpr int rate=44100, quantum=128, frames=12288;
+    constexpr int quantum=128;
+    const int frames=(rate*3/quantum)*quantum;
+    const auto signal=[rate](int n,int channel) {
+        const double t=static_cast<double>(n)/rate, angle=2*std::numbers::pi*t;
+        const double envelope=(t>0.28 && t<0.43)?0.8:0.22;
+        if (n%quantum==60 && (n/quantum)%41==3) return 0.75f;
+        return static_cast<float>(envelope*(0.57*std::sin(77*angle+channel)+0.19*std::sin(593*angle)
+                                   +0.11*std::sin(3241*angle)+0.08*std::sin(6771*angle)+0.05*std::sin(12949*angle)));
+    };
     std::vector<std::vector<float>> expected(channels);
     for (int c=0;c<channels;++c) {
         mkii::native::Solver reference;
         if (!reference.prepare(rate)) return false;
         expected[c].resize(frames);
         for (int i=0;i<frames;++i) {
-            const auto input=static_cast<float>(0.09*std::sin(2*std::numbers::pi*(1000+c*301)*i/rate));
+            const auto input=signal(i,c);
             expected[c][i]=static_cast<float>(reference.step(input,0.2f,4,0));
         }
         if (reference.failures()!=0) return false;
@@ -37,13 +46,14 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,int channels) {
     juce::AudioBuffer<float> audio(channels,quantum);
     juce::MidiBuffer midi;
     double maxError=0,maxCallbackMs=0;
+    mkii::native::PlaybackClock clock;
     const auto start=Clock::now();
     for (int offset=0;offset<frames+latency;offset+=quantum) {
         for (int c=0;c<channels;++c)
             for (int i=0;i<quantum;++i)
-                audio.setSample(c,i,static_cast<float>(0.09*std::sin(2*std::numbers::pi*(1000+c*301)*(offset+i)/rate)));
+                audio.setSample(c,i,signal(offset+i,c));
         const auto due=start+std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(double(offset)/rate));
-        std::this_thread::sleep_until(due);
+        clock.waitUntil(due);
         const auto begin=Clock::now();
         plugin.processBlock(audio,midi);
         maxCallbackMs=std::max(maxCallbackMs,std::chrono::duration<double,std::milli>(Clock::now()-begin).count());
@@ -57,7 +67,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,int channels) {
             }
         }
     }
-    std::cout<<"Live playback with "<<channels<<" channel(s), latency "<<latency
+    std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), latency "<<latency
              <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs<<" ms"<<std::endl;
     return maxError<0.00002 && maxCallbackMs<quantum*1000.0/rate;
 }
@@ -95,7 +105,10 @@ int main(int argc, char** argv) {
             return 5;
         }
 #ifdef MKII_NATIVE
-        if (!testNativePlayback(*plugin,layout.size())) return 9;
+        for (const int rate : {44100,48000}) {
+            plugin->releaseResources();
+            if (!testNativePlayback(*plugin,rate,layout.size())) return 9;
+        }
 #else
         plugin->setNonRealtime(false);
         plugin->prepareToPlay(44100, 256);

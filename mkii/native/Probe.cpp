@@ -1,4 +1,5 @@
 #include "Pipeline.hpp"
+#include "PlaybackClock.hpp"
 
 #include <algorithm>
 #include <array>
@@ -62,6 +63,7 @@ bool playback(double rate,int channels) {
     mkii::native::Pipeline engine;
     if (!engine.prepare(rate,channels)) return false;
     using Clock=std::chrono::steady_clock;
+    mkii::native::PlaybackClock clock;
     const auto begin=Clock::now();
     double peakMs=0,energy=0;
     unsigned lateCallbacks=0;
@@ -74,7 +76,7 @@ bool playback(double rate,int channels) {
                 audio[c][n]=static_cast<float>(signal(b*blockSize+n,rate,true,c));
         const auto scheduled=begin+std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(b*blockSize/rate));
-        std::this_thread::sleep_until(scheduled);
+        clock.waitUntil(scheduled);
         const auto callback=Clock::now();
         engine.process(pointers.data(),blockSize,{});
         const double ms=std::chrono::duration<double,std::milli>(Clock::now()-callback).count();

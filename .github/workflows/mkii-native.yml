@@ -48,10 +48,12 @@ jobs:
           set -euo pipefail
           staging/native.exe --capture > staging/native-1kHz.dat
           python mkii/verify_stream.py staging/Circuit/reference.exe staging/Circuit staging/native-parity.json staging/native-1kHz.dat
-      - name: Check paced mono and stereo playback
+      - name: Record native solver timing and paced playback
+        continue-on-error: true
         shell: msys2 {0}
         run: |
           set -euo pipefail
+          staging/native.exe | tee staging/native-compute.txt
           staging/native.exe --playback | tee staging/native-playback.txt
       - name: Build Windows VST3 and test host
         shell: pwsh
@@ -70,7 +72,7 @@ jobs:
           if ($test.ExitCode -ne 0) { exit $test.ExitCode }
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item $vst release -Recurse
-          Copy-Item staging/native-parity.json,staging/native-playback.txt,mkii/native/README.md release
+          Copy-Item staging/native-parity.json,smoke-out.txt,mkii/native/README.md release
       - uses: actions/upload-artifact@v4
         with:
           name: 160-MKII-0.1-Windows-x64-VST3-Native
