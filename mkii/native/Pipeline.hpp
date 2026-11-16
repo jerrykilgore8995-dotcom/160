@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <thread>
+#include <limits>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -43,7 +44,6 @@ public:
             v.written.store(0,std::memory_order_relaxed);
             v.completed.store(0,std::memory_order_relaxed);
             v.failed.store(0,std::memory_order_relaxed);
-            v.running.store(true,std::memory_order_relaxed);
         }
         try {
             for (;active<channels;++active) {
@@ -58,8 +58,11 @@ public:
     }
 
     void stop() {
-        for (int i=0;i<active;++i)
-            voices[i].running.store(false,std::memory_order_release);
+        for (int i=0;i<active;++i) {
+            auto& published=voices[i].written;
+            published.store(stopSignal,std::memory_order_release);
+            published.notify_one();
+        }
         for (int i=0;i<active;++i)
             if (voices[i].worker.joinable()) voices[i].worker.join();
         active=0;
@@ -90,8 +93,11 @@ public:
                     sample={channels[c][offset+i],settings};
                 }
             }
-            for (int c=0;c<active;++c)
-                voices[c].written.store(position+frames,std::memory_order_release);
+            for (int c=0;c<active;++c) {
+                auto& published=voices[c].written;
+                published.store(position+frames,std::memory_order_release);
+                published.notify_one();
+            }
             control=0;
             for (int c=0;c<active;++c) {
                 auto& v=voices[c];
@@ -136,6 +142,7 @@ public:
     float controlVolts() const {return control;}
 
 private:
+    static constexpr auto stopSignal=std::numeric_limits<std::uint64_t>::max();
     struct Input {float value=0;Controls settings;};
     struct Output {float value=0,control=0;};
     struct Voice {
@@ -144,12 +151,14 @@ private:
             SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_ABOVE_NORMAL);
 #endif
             std::uint64_t next=0;
-            while (running.load(std::memory_order_acquire)) {
-                const auto end=std::min(next+32,written.load(std::memory_order_acquire));
-                if (end==next) {
-                    std::this_thread::sleep_for(std::chrono::microseconds(75));
+            while (true) {
+                const auto published=written.load(std::memory_order_acquire);
+                if (published==stopSignal) return;
+                if (published==next) {
+                    written.wait(next,std::memory_order_acquire);
                     continue;
                 }
+                const auto end=std::min(next+32,published);
                 for (;next<end;++next) {
                     const auto& s=input[next&(capacity-1)];
                     const auto& k=s.settings;
@@ -167,7 +176,6 @@ private:
         alignas(64) std::atomic<std::uint64_t> written{0};
         alignas(64) std::atomic<std::uint64_t> completed{0};
         std::atomic<unsigned> failed{0};
-        std::atomic<bool> running{false};
         std::thread worker;
     };
     std::array<Voice,2> voices;

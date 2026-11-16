@@ -160,7 +160,11 @@ public:
     Compressor()
         : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
                                            .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-          state(*this, nullptr, "Settings", parameters()) {}
+          state(*this, nullptr, "Settings", parameters()) {
+#ifdef MKII_NATIVE
+        setLatencySamples(native::Pipeline::latency);
+#endif
+    }
 
     const juce::String getName() const override { return "160 MKII"; }
     bool acceptsMidi() const override { return false; }
