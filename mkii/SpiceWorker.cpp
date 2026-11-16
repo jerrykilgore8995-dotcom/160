@@ -156,7 +156,23 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
+    _putenv_s("SPICE_SCRIPTS", ".");
+#else
+    setenv("SPICE_SCRIPTS", ".", 1);
 #endif
+    if (argc == 3 && std::string(argv[1]) == "--batch") {
+        // The independent reference deck uses ordinary PWL sources, no
+        // streaming callbacks, and ngspice's native transient commands.
+        ngSpice_Init([](char* text, int, void*) {
+            std::fprintf(stderr, "%s\n", text);
+            return 0;
+        }, nullptr, [](int status, bool, bool, int, void*) -> int {
+            std::exit(status);
+        }, nullptr, nullptr, nullptr, nullptr);
+        if (command("codemodel ./spice2poly.cm") != 0)
+            return 3;
+        return command(std::string("source ") + argv[2]);
+    }
     if (argc != 2) return 2;
     std::filesystem::current_path(argv[1]);
     Stream stream;
@@ -164,11 +180,6 @@ int main(int argc, char** argv) {
         || !std::isfinite(stream.start.rate) || stream.start.rate < 8000 || stream.start.rate > 384000
         || !stream.receive())
         return 2;
-#ifdef _WIN32
-    _putenv_s("SPICE_SCRIPTS", ".");
-#else
-    setenv("SPICE_SCRIPTS", ".", 1);
-#endif
     ngSpice_Init(Stream::message, nullptr, Stream::exitRequested, Stream::sample,
                  Stream::initialise, nullptr, &stream);
     ngSpice_Init_Sync(Stream::voltage, nullptr, Stream::sync, nullptr, &stream);

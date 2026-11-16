@@ -1,6 +1,5 @@
 """Black-box check of the actual plug-in worker against an independent batch deck."""
 import json
-import os
 from pathlib import Path
 import re
 import struct
@@ -11,7 +10,7 @@ import time
 
 import numpy as np
 
-worker, deck, ngspice, report = [Path(p).resolve() for p in sys.argv[1:]]
+worker, deck, report = [Path(p).resolve() for p in sys.argv[1:]]
 rate = 44100
 settle = 0.05
 scale = 13.790836925122916
@@ -65,20 +64,23 @@ quit
 .endc
 .end
 """
-with tempfile.TemporaryDirectory(prefix="160-mkii-") as temp:
-    temp_deck = Path(temp) / "reference.cir"
-    temp_deck.write_text(batch, encoding="utf-8")
-    (Path(temp) / "spinit").write_text("codemodel ./spice2poly.cm\n", encoding="ascii")
-    result = subprocess.run([str(ngspice), "-b", str(temp_deck)], cwd=deck,
-                            env={**os.environ, "SPICE_SCRIPTS": temp},
+with tempfile.NamedTemporaryFile(mode="w", suffix=".cir", dir=deck, encoding="utf-8",
+                                 delete=False) as temp:
+    temp.write(batch)
+    temp_deck = Path(temp.name)
+raw = deck / "mkii-reference.dat"
+raw.unlink(missing_ok=True)
+try:
+    result = subprocess.run([str(worker), "--batch", temp_deck.name], cwd=deck,
                             capture_output=True, timeout=180)
-    raw = deck / "mkii-reference.dat"
     if result.returncode != 0 or not raw.exists():
         raise RuntimeError(result.stdout.decode(errors="replace")[-3000:] +
                            result.stderr.decode(errors="replace")[-3000:])
     reference = np.loadtxt(raw)
-    raw.unlink()
     assert reference[-1, 0] >= settle + grid[-1]
+finally:
+    temp_deck.unlink(missing_ok=True)
+    raw.unlink(missing_ok=True)
 target = np.interp(settle + grid, reference[:, 0], reference[:, 1]) / scale
 error = audio - target
 
