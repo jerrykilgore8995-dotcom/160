@@ -1,0 +1,115 @@
+{
+  "status": "published reference targets, not simulated results",
+  "sources": {
+    "manual": "https://www.thehistoryofrecording.com/Manuals/DBX/dbx_160.pdf",
+    "service": "https://audiocircuit.dk/downloads/dbx/DBX-16x-lim-sm.pdf",
+    "vca_internal": "https://proaudiodesignforum.com/forum/php/viewtopic.php?t=1612",
+    "rms_patent": "https://patents.google.com/patent/US3681618A",
+    "other_patents": [
+      "https://patents.google.com/patent/US3714462A",
+      "https://patents.google.com/patent/US3789143A"
+    ],
+    "history": "https://www.mixonline.com/technology/birth-of-a-classic-the-dbx-160-compressor"
+  },
+  "topology": {
+    "detector": "true RMS",
+    "control": "feed-forward",
+    "knee": "hard",
+    "stereo_original": "independent channels"
+  },
+  "ratio": [
+    1,
+    120
+  ],
+  "threshold_Vrms": [
+    0.01,
+    3
+  ],
+  "makeup_dB": [
+    -20,
+    20
+  ],
+  "attack": {
+    "definition": "63% of level change",
+    "steps": [
+      {
+        "step_dB": 10,
+        "time_ms": 15
+      },
+      {
+        "step_dB": 20,
+        "time_ms": 5
+      },
+      {
+        "step_dB": 30,
+        "time_ms": 3
+      }
+    ],
+    "note": "program dependent; service literature also describes fast-signal 100 us and slow-signal 5 ms without equivalent test definition; do not conflate"
+  },
+  "release": {
+    "nominal_dB_per_s": 120,
+    "program_dependent": true
+  },
+  "distortion": {
+    "K2_percent": 0.075,
+    "K2_condition": "infinite ratio, +4 dBm output",
+    "K3_percent": 0.5,
+    "K3_condition": "typical infinite ratio; frequency not stated",
+    "K3_frequency_trend": "manual states approximately inverse frequency; do not assign absolute reference frequency absent evidence"
+  },
+  "noise": {
+    "equivalent_input_dBm": -78,
+    "weighting": "unweighted",
+    "termination": "input shorted",
+    "bandwidth": "not stated"
+  },
+  "frequency": {
+    "range_Hz": [
+      30,
+      20000
+    ],
+    "tolerance_dB": 1
+  },
+  "impedance_ohms": {
+    "input_balanced": 50000,
+    "input_unbalanced": 25000,
+    "output": 25
+  },
+  "headroom": {
+    "input_Vrms": 8.7,
+    "output_bridging_Vrms": 15.5,
+    "output_600ohm_Vrms": 12.3
+  },
+  "meter": {
+    "range_dB": [
+      -40,
+      20
+    ],
+    "modes": [
+      "input",
+      "output",
+      "gain change"
+    ],
+    "zero_calibration_dB": [
+      -10,
+      10
+    ]
+  },
+  "supply": {
+    "mains_V": 117,
+    "frequency_Hz": [
+      50,
+      60
+    ],
+    "max_W": 8
+  },
+  "unresolved": [
+    "complete netlist",
+    "module revision and exact RMS internal parts",
+    "semiconductor manufacturer models",
+    "absolute harmonic spectrum across frequencies and levels",
+    "noise measurement bandwidth",
+    "hardware calibration and comparison"
+  ]
+}
