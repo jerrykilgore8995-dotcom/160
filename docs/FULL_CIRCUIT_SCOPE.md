@@ -1,0 +1,10 @@
+# Full circuit scope — mandatory
+This supplements the existing circuit and harmonic validation requirements. Status: specification, not implemented netlist.
+The complete original 160VU circuit is required, not merely the discrete output stage.
+- Balanced input: reproduce both signal legs, input protection, coupling, bias and feedback networks, differential amplifier IC(s), common-mode and differential impedances, CMRR, noise, finite open-loop gain and bandwidth, slew, input bias currents, overload/recovery, distortion, output current and actual supply-pin loading. Identify exact IC part numbers and revision from schematic; use verified manufacturer transistor-level SPICE models when available, otherwise reconstruct from documented internal schematics and clearly report any unavailable internals. An ideal op amp or unverified generic substitute is not acceptable as the reference.
+- Original Blackmer 200 VCA: internal transistor network, matching, temperature compensation, bias/current mirrors, control port, signal current ports, trims, supply pins and surrounding components. Preserve signal/sidechain coupling.
+- RMS detector: original module internals, log/antilog networks, capacitors, bias, ripple, threshold/ratio circuitry and control-current interaction.
+- All intermediate amplifiers and I/V conversion: same component and IC internal-model requirements as balanced input.
+- Discrete output driver and +24 VDC circuitry: all transistors, bias, feedback, coupling, load and supply interactions.
+- Entire PSU, ground network, switches, potentiometers, trimmers, LEDs and meter circuitry; retain loading and shared-rail effects.
+Audit every populated schematic designator and every terminal against the netlist, including module and IC subcircuit pin mappings; retain source references. Do not double count distortion through HNM or fit arbitrary harmonics. No reference simulation until complete connectivity audit passes. Missing proprietary internal IC data must be explicitly documented and blocks a claim of exact transistor-level reconstruction. Existing harmonic convergence and release gates remain mandatory.
