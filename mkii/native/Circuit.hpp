@@ -34,14 +34,17 @@ inline Jet squareRoot(Jet x) {
     return {value,x.p*slope,x.q*slope};
 }
 
-// Range reduction keeps the polynomial argument within half a log(2).
 inline double junctionExp(double x) {
-    const int exponent = static_cast<int>(x * 1.4426950408889634 + (x >= 0 ? 0.5 : -0.5));
-    const double r = x - exponent * 0.6931471805599453;
-    const double exp = 1+r*(1+r*(0.5+r*(1.0/6+r*(1.0/24+r*(1.0/120+r*(1.0/720+
-        r*(1.0/5040+r*(1.0/40320+r*(1.0/362880+r*(1.0/3628800+r*(1.0/39916800)))))))))));
-    const auto power = std::bit_cast<double>(static_cast<std::uint64_t>(exponent+1023) << 52);
-    return exp * power;
+    // The forward-junction load bounds x to [-3, 70]. Range reduction
+    // keeps r within half a log(2), where this degree-eight series is
+    // accurate to better than one part in a billion.
+    const int exponent=static_cast<int>(x*1.4426950408889634+4.5)-4;
+    const double r=x-exponent*0.6931471805599453;
+    const double square=r*r, fourth=square*square;
+    const double low=1+r+square*(0.5+r/6);
+    const double high=(1.0/24+r/120)+square*(1.0/720+r/5040);
+    const auto power=std::bit_cast<double>(static_cast<std::uint64_t>(exponent+1023)<<52);
+    return (low+fourth*(high+fourth/40320))*power;
 }
 
 inline Jet junction(Jet volts, double emissionVoltage, double saturation) {
@@ -124,6 +127,8 @@ public:
         inverse = 1.5*rate;
         history1 = -2.0*rate;
         history2 = 0.5*rate;
+        diodeStorage.clear();
+        bjtStorage.clear();
         stampLinear();
         stampNonlinear<true>();
         if (!matrix.prepare()) return false;
@@ -406,11 +411,17 @@ private:
             auto& d=deck.diodes[at];
             const Jet voltage{v(d.a)-v(d.b),1,0};
             const Jet i=junction(voltage,m.n*thermal,m.is);
-            const Jet q=capacitance(voltage,m.cjo,m.vj,m.m,m.fc)+i*m.tt;
-            d.q=q.value;
-            d.slope=q.p;
-            current(d.a,d.b,i.value+voltage.value*gmin+inverse*d.q+history1*d.q1+history2*d.q2);
-            const double g=i.p+gmin+inverse*q.p;
+            double j=i.value+voltage.value*gmin;
+            double g=i.p+gmin;
+            if constexpr (m.cjo!=0 || m.tt!=0) {
+                if constexpr (sizing) diodeStorage.push_back(at);
+                const Jet q=capacitance(voltage,m.cjo,m.vj,m.m,m.fc)+i*m.tt;
+                d.q=q.value;
+                d.slope=q.p;
+                j+=inverse*d.q+history1*d.q1+history2*d.q2;
+                g+=inverse*q.p;
+            }
+            current(d.a,d.b,j);
             if constexpr (sizing) derivatives(d.a,d.b,d.a,d.b,g);
             else {
                 matrix.addSlot(d.slots[0],g);
@@ -432,15 +443,29 @@ private:
                 baseCharge=baseCharge/(Jet{0.5}+squareRoot(knee)*0.5);
             }
             const Jet transport=(f-r)*baseCharge;
-            Jet qf=capacitance(be,m.cje,m.vje,m.mje,m.fc);
-            if (m.tf && be.value>0) qf=qf+f*baseCharge*m.tf;
-            const Jet qr=capacitance(bc,m.cjc,m.vjc,m.mjc,m.fc)+r*m.tr;
-            d.f=qf.value; d.r=qr.value;
-            d.fq=qf; d.rq=qr; d.sign=sign;
-            Jet ibf=f*(1/m.bf)+junction(be,m.ne*thermal,m.ise)+be*gmin+qf*inverse;
-            Jet ibr=r*(1/m.br)+junction(bc,m.nc*thermal,m.isc)+bc*gmin+qr*inverse;
-            ibf.value+=history1*d.f1+history2*d.f2;
-            ibr.value+=history1*d.r1+history2*d.r2;
+            Jet ibf=f*(1/m.bf)+junction(be,m.ne*thermal,m.ise)+be*gmin;
+            Jet ibr=r*(1/m.br)+junction(bc,m.nc*thermal,m.isc)+bc*gmin;
+            if constexpr (m.cje!=0 || m.tf!=0 || m.cjc!=0 || m.tr!=0) {
+                if constexpr (sizing) {
+                    bjtStorage.push_back(at);
+                    d.sign=sign;
+                }
+                if constexpr (m.cje!=0 || m.tf!=0) {
+                    Jet qf=capacitance(be,m.cje,m.vje,m.mje,m.fc);
+                    if (m.tf && be.value>0) qf=qf+f*baseCharge*m.tf;
+                    d.f=qf.value;
+                    d.fq=qf;
+                    ibf=ibf+qf*inverse;
+                    ibf.value+=history1*d.f1+history2*d.f2;
+                }
+                if constexpr (m.cjc!=0 || m.tr!=0) {
+                    const Jet qr=capacitance(bc,m.cjc,m.vjc,m.mjc,m.fc)+r*m.tr;
+                    d.r=qr.value;
+                    d.rq=qr;
+                    ibr=ibr+qr*inverse;
+                    ibr.value+=history1*d.r1+history2*d.r2;
+                }
+            }
             terminal<sizing>(d.c,d.c,d.b,d.e,sign,transport-ibr,d.slots.data());
             terminal<sizing>(d.b,d.c,d.b,d.e,sign,ibf+ibr,d.slots.data()+3);
             terminal<sizing>(d.e,d.c,d.b,d.e,sign,(transport+ibf)*-1,d.slots.data()+6);
@@ -473,11 +498,15 @@ private:
             double maxNode=0, maxBranch=0;
             for (int i=0;i<deck.nodes;++i) maxNode=std::max(maxNode,std::abs(matrix.x[i]));
             for (int i=deck.nodes;i<deck.size;++i) maxBranch=std::max(maxBranch,std::abs(matrix.x[i]));
-            if (maxNode<0.004 && maxBranch<0.000006) {
+            if (maxNode<0.012 && maxBranch<0.000030) {
                 const auto delta=[&](int n){return n<0?0:matrix.x[n];};
                 for (int i=0;i<deck.size;++i) x[i]+=matrix.x[i];
-                for (auto& d : deck.diodes) d.q+=d.slope*(delta(d.a)-delta(d.b));
-                for (auto& d : deck.bjts) {
+                for (const int at : diodeStorage) {
+                    auto& d=deck.diodes[at];
+                    d.q+=d.slope*(delta(d.a)-delta(d.b));
+                }
+                for (const int at : bjtStorage) {
+                    auto& d=deck.bjts[at];
                     const double f=d.sign*(delta(d.b)-delta(d.e));
                     const double r=d.sign*(delta(d.b)-delta(d.c));
                     d.f+=d.fq.p*f+d.fq.q*r;
@@ -511,8 +540,18 @@ private:
             d.q2=dc?d.q:d.q1;
             d.q1=d.q;
         }
-        for (auto& d : deck.diodes) {d.q2=dc?d.q:d.q1;d.q1=d.q;}
-        for (auto& d : deck.bjts) {d.f2=dc?d.f:d.f1;d.f1=d.f;d.r2=dc?d.r:d.r1;d.r1=d.r;}
+        for (const int i : diodeStorage) {
+            auto& d=deck.diodes[i];
+            d.q2=dc?d.q:d.q1;
+            d.q1=d.q;
+        }
+        for (const int i : bjtStorage) {
+            auto& d=deck.bjts[i];
+            d.f2=dc?d.f:d.f1;
+            d.f1=d.f;
+            d.r2=dc?d.r:d.r1;
+            d.r1=d.r;
+        }
         std::copy(x.begin(), x.end(), previous.begin());
     }
 
@@ -524,6 +563,7 @@ private:
     struct LinearRow {int row,begin,end;};
     std::vector<KnownTerm> knownTerms;
     std::vector<LinearRow> linearRows;
+    std::vector<int> diodeStorage,bjtStorage;
     std::vector<double> constantRhs,sampleRhs;
     Sparse matrix;
     std::vector<double> x,previous,fixed,savedNodes;

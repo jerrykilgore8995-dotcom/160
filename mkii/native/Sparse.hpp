@@ -214,9 +214,11 @@ public:
             if (forward.changes) code<<"    x["<<s->column<<"]=v*a["<<s->pivot<<"];\n";
             else code<<"    x["<<s->column<<"]=v*"<<std::hexfloat<<forward.reciprocal
                      <<std::defaultfloat<<";\n";
-            code<<"    if (!std::isfinite(x["<<s->column<<"])) return false;\n";
+
         }
-        code<<"    return true;\n}\n";
+        code<<"    bool finite=true;\n";
+        code<<"    for (int i=0;i<"<<size<<";++i) finite &= std::isfinite(x[i]);\n";
+        code<<"    return finite;\n}\n";
     }
 
     bool solve() {

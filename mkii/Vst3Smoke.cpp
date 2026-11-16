@@ -94,6 +94,9 @@ int main(int argc, char** argv) {
         return 4;
     }
     std::cout << "Loaded VST3 audio effect" << std::endl;
+#ifdef MKII_NATIVE
+    bool playbackPassed=true;
+#endif
     for (const auto layout : {juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo()}) {
         std::cout << "Configuring " << layout.size() << " channel(s)" << std::endl;
         plugin->releaseResources();
@@ -107,7 +110,7 @@ int main(int argc, char** argv) {
 #ifdef MKII_NATIVE
         for (const int rate : {44100,48000}) {
             plugin->releaseResources();
-            if (!testNativePlayback(*plugin,rate,layout.size())) return 9;
+            playbackPassed=testNativePlayback(*plugin,rate,layout.size()) && playbackPassed;
         }
 #else
         plugin->setNonRealtime(false);
@@ -150,6 +153,7 @@ int main(int argc, char** argv) {
     }
     plugin->releaseResources();
 #ifdef MKII_NATIVE
+    if (!playbackPassed) return 9;
     std::cout<<"Windows native VST3 passed live mono and stereo playback\n";
 #else
     std::cout << "Windows VST3 offline circuit render passed in mono and stereo\n";

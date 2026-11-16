@@ -55,6 +55,11 @@ jobs:
           set -euo pipefail
           staging/native.exe | tee staging/native-compute.txt
           staging/native.exe --playback | tee staging/native-playback.txt
+      - uses: actions/cache/restore@v4
+        with:
+          path: build-native
+          key: native-msvc-v1-${{ github.sha }}
+          restore-keys: native-msvc-v1-
       - name: Build Windows VST3 and test host
         shell: pwsh
         run: |
@@ -62,6 +67,11 @@ jobs:
           cmake -S mkii -B build-native -A x64 "-DMKII_NATIVE_DECK_DIR=$deck"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --build build-native --config Release --target Circuit160_VST3 Vst3Smoke --parallel 4
+      - uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: build-native
+          key: native-msvc-v1-${{ github.sha }}
       - name: Verify normal VST3 playback and package the bundle
         shell: pwsh
         run: |
