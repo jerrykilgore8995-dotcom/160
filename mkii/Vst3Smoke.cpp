@@ -5,15 +5,14 @@
 #include <iostream>
 
 #ifdef MKII_NATIVE
-#include "native/Pipeline.hpp"
+#include "native/Client.hpp"
 #include "native/PlaybackClock.hpp"
 
 #include <chrono>
 #include <numbers>
 #include <vector>
 
-bool testNativePlayback(juce::AudioPluginInstance& plugin,int rate,int channels) {
-    using mkii::native::Pipeline;
+bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels) {
     using Clock=std::chrono::steady_clock;
     constexpr int quantum=128;
     const int frames=(rate*3/quantum)*quantum;
@@ -24,22 +23,24 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,int rate,int channels)
         return static_cast<float>(envelope*(0.57*std::sin(77*angle+channel)+0.19*std::sin(593*angle)
                                    +0.11*std::sin(3241*angle)+0.08*std::sin(6771*angle)+0.05*std::sin(12949*angle)));
     };
-    std::vector<std::vector<float>> expected(channels);
-    for (int c=0;c<channels;++c) {
-        mkii::native::Solver reference;
-        if (!reference.prepare(rate)) return false;
-        expected[c].resize(frames);
-        for (int i=0;i<frames;++i) {
-            const auto input=signal(i,c);
-            expected[c][i]=static_cast<float>(reference.step(input,0.2f,4,0));
-        }
-        if (reference.failures()!=0) return false;
-    }
+    mkii::native::Client reference;
+    if (!reference.open(dllPath.toWideCharPointer()) || !reference.prepare(rate,channels))
+        return false;
+    const int expectedLatency=reference.latency();
+    const int testFrames=frames+expectedLatency;
+    juce::AudioBuffer<float> expected(channels,testFrames);
+    for (int c=0;c<channels;++c)
+        for (int i=0;i<testFrames;++i)
+            expected.setSample(c,i,signal(i,c));
+    if (!reference.process(expected.getArrayOfWritePointers(),testFrames,{},true) ||
+        reference.failedSolves()!=0)
+        return false;
+    reference.stop();
 
     plugin.setNonRealtime(false);
     plugin.prepareToPlay(rate,quantum);
     const int latency=plugin.getLatencySamples();
-    if (latency!=Pipeline::latency) {
+    if (latency!=expectedLatency) {
         std::cerr<<"Unexpected VST3 latency: "<<latency<<std::endl;
         return false;
     }
@@ -48,9 +49,11 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,int rate,int channels)
     double maxError=0,maxCallbackMs=0;
     mkii::native::PlaybackClock clock;
     const auto start=Clock::now();
-    for (int offset=0;offset<frames+latency;offset+=quantum) {
+    for (int offset=0;offset<testFrames;offset+=quantum) {
+        const int count=std::min(quantum,testFrames-offset);
+        audio.setSize(channels,count,false,false,true);
         for (int c=0;c<channels;++c)
-            for (int i=0;i<quantum;++i)
+            for (int i=0;i<count;++i)
                 audio.setSample(c,i,signal(offset+i,c));
         const auto due=start+std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(double(offset)/rate));
         clock.waitUntil(due);
@@ -58,11 +61,10 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,int rate,int channels)
         plugin.processBlock(audio,midi);
         maxCallbackMs=std::max(maxCallbackMs,std::chrono::duration<double,std::milli>(Clock::now()-begin).count());
         for (int c=0;c<channels;++c) {
-            for (int i=0;i<quantum;++i) {
-                const int sample=offset+i-latency;
+            for (int i=0;i<count;++i) {
                 const auto value=audio.getSample(c,i);
                 if (!std::isfinite(value)) return false;
-                const double target=sample<0?0:expected[c][sample];
+                const double target=expected.getSample(c,offset+i);
                 maxError=std::max(maxError,std::abs(value-target));
             }
         }
@@ -96,6 +98,8 @@ int main(int argc, char** argv) {
     std::cout << "Loaded VST3 audio effect" << std::endl;
 #ifdef MKII_NATIVE
     bool playbackPassed=true;
+    const auto dll=juce::File(juce::String::fromUTF8(argv[1])).getChildFile("Contents")
+        .getChildFile("Resources").getChildFile("Native").getChildFile("160-native.dll");
 #endif
     for (const auto layout : {juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo()}) {
         std::cout << "Configuring " << layout.size() << " channel(s)" << std::endl;
@@ -110,7 +114,7 @@ int main(int argc, char** argv) {
 #ifdef MKII_NATIVE
         for (const int rate : {44100,48000}) {
             plugin->releaseResources();
-            playbackPassed=testNativePlayback(*plugin,rate,layout.size()) && playbackPassed;
+            playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),rate,layout.size()) && playbackPassed;
         }
 #else
         plugin->setNonRealtime(false);

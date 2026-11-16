@@ -34,26 +34,8 @@ target_compile_definitions(Vst3Smoke PRIVATE JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BRO
 target_link_libraries(Vst3Smoke PRIVATE juce::juce_audio_processors juce::juce_gui_basics
                                         juce::juce_recommended_config_flags)
 
-if(DEFINED MKII_NATIVE_DECK_DIR)
-    add_executable(GenerateNativeSolve native/GenerateSolve.cpp)
-    target_include_directories(GenerateNativeSolve PRIVATE "${MKII_NATIVE_DECK_DIR}")
-    target_compile_features(GenerateNativeSolve PRIVATE cxx_std_20)
-    set(schedule_directory "${CMAKE_CURRENT_BINARY_DIR}/native-generated")
-    set(schedule "${schedule_directory}/GeneratedSolve.hpp")
-    add_custom_command(OUTPUT "${schedule}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${schedule_directory}"
-        COMMAND GenerateNativeSolve "${schedule}"
-        DEPENDS GenerateNativeSolve "${MKII_NATIVE_DECK_DIR}/Deck.hpp"
-        VERBATIM)
-    add_custom_target(NativeSolveSchedule DEPENDS "${schedule}")
+if(MKII_NATIVE_RUNTIME)
     foreach(target Circuit160 Vst3Smoke)
-        add_dependencies(${target} NativeSolveSchedule)
-        target_include_directories(${target} PRIVATE "${MKII_NATIVE_DECK_DIR}" "${schedule_directory}")
         target_compile_definitions(${target} PRIVATE MKII_NATIVE=1 NOMINMAX)
     endforeach()
-    if(MSVC)
-        foreach(target GenerateNativeSolve Circuit160 Vst3Smoke)
-            target_compile_options(${target} PRIVATE /arch:AVX2 /fp:precise)
-        endforeach()
-    endif()
 endif()

@@ -8,7 +8,7 @@
 #include <cmath>
 #include <string>
 #ifdef MKII_NATIVE
-#include "native/Pipeline.hpp"
+#include "native/Client.hpp"
 #else
 #include <windows.h>
 #endif
@@ -137,6 +137,8 @@ private:
     HANDLE input = nullptr, output = nullptr, process = nullptr;
 };
 
+#endif
+
 juce::File circuitResources() {
     // Derive the mounted VST3 module path even when the DAW has another working directory.
     static int moduleAnchor;
@@ -152,8 +154,6 @@ juce::File circuitResources() {
         .getParentDirectory().getChildFile("Resources");
 }
 
-#endif
-
 class Compressor : public juce::AudioProcessor {
 public:
     enum Status { live, rendering, failed };
@@ -162,7 +162,9 @@ public:
                                            .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
           state(*this, nullptr, "Settings", parameters()) {
 #ifdef MKII_NATIVE
-        setLatencySamples(native::Pipeline::latency);
+        const auto dll=circuitResources().getChildFile("Native").getChildFile("160-native.dll");
+        const auto path=dll.getFullPathName();
+        if (engine.open(path.toWideCharPointer())) setLatencySamples(engine.latency());
 #endif
     }
 
@@ -186,7 +188,6 @@ public:
 
 #ifdef MKII_NATIVE
     void prepareToPlay(double sampleRate, int) override {
-        setLatencySamples(native::Pipeline::latency);
         ready=engine.prepare(sampleRate,getTotalNumInputChannels());
         status.store(ready?live:failed);
     }
@@ -320,7 +321,7 @@ private:
     }
 
 #ifdef MKII_NATIVE
-    native::Pipeline engine;
+    native::Client engine;
     std::atomic<float>* threshold=state.getRawParameterValue("threshold");
     std::atomic<float>* ratio=state.getRawParameterValue("ratio");
     std::atomic<float>* output=state.getRawParameterValue("output");

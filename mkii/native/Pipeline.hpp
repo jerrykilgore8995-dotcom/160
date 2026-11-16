@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Circuit.hpp"
+#include "Api.hpp"
 
 #include <array>
 #include <atomic>
@@ -17,10 +18,6 @@
 #endif
 
 namespace mkii::native {
-
-struct Controls {
-    float threshold=0.2f, ratio=4, makeup=0;
-};
 
 // Each channel owns its circuit state and a single-producer, single-consumer ring.
 // The callback submits and reads samples without locking or waiting in live mode.

@@ -41,6 +41,11 @@ jobs:
           g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -I staging/generated mkii/native/GenerateSolve.cpp -o staging/generate-solve.exe
           staging/generate-solve.exe staging/schedule/GeneratedSolve.hpp
           g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -pthread -I staging/generated -I staging/schedule mkii/native/Probe.cpp -o staging/native.exe
+          mkdir -p staging/runtime
+          g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -pthread -shared -static \
+              -I staging/generated -I staging/schedule mkii/native/Runtime.cpp -o staging/runtime/160-native.dll
+          objdump -p staging/runtime/160-native.dll | grep 'DLL Name:'
+          if objdump -p staging/runtime/160-native.dll | grep -Ei 'DLL Name:.*(ngspice|libstdc|libgcc|winpthread)'; then exit 1; fi
           if objdump -p staging/native.exe | grep -i 'DLL Name:.*ngspice'; then exit 1; fi
       - name: Measure parity at 1 kHz
         shell: msys2 {0}
@@ -63,8 +68,7 @@ jobs:
       - name: Build Windows VST3 and test host
         shell: pwsh
         run: |
-          $deck = (Resolve-Path "staging/generated").Path
-          cmake -S mkii -B build-native -A x64 "-DMKII_NATIVE_DECK_DIR=$deck"
+          cmake -S mkii -B build-native -A x64 -DMKII_NATIVE_RUNTIME=ON
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --build build-native --config Release --target Circuit160_VST3 Vst3Smoke --parallel 4
       - uses: actions/cache/save@v4
@@ -76,6 +80,9 @@ jobs:
         shell: pwsh
         run: |
           $vst = (Resolve-Path "build-native/Circuit160_artefacts/Release/VST3/160 MKII.vst3").Path
+          $resources = Join-Path $vst "Contents/Resources/Native"
+          New-Item -ItemType Directory -Force $resources | Out-Null
+          Copy-Item "staging/runtime/160-native.dll" $resources
           $hostTest = (Resolve-Path "build-native/Vst3Smoke_artefacts/Release/Vst3Smoke.exe").Path
           $test = Start-Process -FilePath $hostTest -ArgumentList "`"$vst`"" -NoNewWindow -PassThru -Wait -RedirectStandardOutput smoke-out.txt -RedirectStandardError smoke-err.txt
           Get-Content smoke-out.txt,smoke-err.txt
