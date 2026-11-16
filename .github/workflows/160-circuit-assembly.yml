@@ -1,0 +1,48 @@
+name: 160 circuit assembly
+on:
+  push:
+    paths:
+      - circuit/**
+      - .github/workflows/160-circuit-assembly.yml
+  workflow_dispatch:
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch verified manufacturer archives
+        run: |
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -t ti.zip
+          unzip -t that.zip
+          unzip -j -o ti.zip RC4558.301 -d circuit
+          unzip -j -o that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          sha256sum ti.zip that.zip
+          head -80 circuit/RC4558.301
+          grep -i '^.subckt' circuit/2181_Macro_01.lib circuit/4301_Macro_01.lib
+      - name: Generate quiet supply and check includes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-numpy ngspice
+          cd circuit
+          python3 generate_supply.py --quiet
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          deck=Path('160_retrofit.cir').read_text()
+          for filename in re.findall(r'^\.include\s+(\S+)',deck,re.M|re.I):
+              assert Path(filename).is_file(), filename
+          print('All direct includes present. No simulation run.')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 160-connected-retrofit-candidate
+          path: |
+            circuit/160_retrofit.cir
+            circuit/RC4558.301
+            circuit/2181_Macro_01.lib
+            circuit/4301_Macro_01.lib
+            circuit/modern_blackmer_cells.inc
+            circuit/supply_generated.inc
+            circuit/generate_supply.py
