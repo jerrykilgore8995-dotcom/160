@@ -10,7 +10,7 @@
 .subckt RC4558_SECTION P M VP VN OUT
 XU P M VP VN OUT RC4558
 .ends
-.param RATIO=4 THRESHV=0.1 MAKEUPDB=0 RMSZERO={0.026220158-0.0065*20*log10(0.7071067811865476*(10k/22.2k)/23.2k/(0.085/10k))}
+.param RATIO=4 THRESHV=0.1 MAKEUPDB=0 RMSZERO={0.026220158-0.0065*3.09-0.0065*20*log10(0.7071067811865476*(10k/22.2k)/23.2k/(0.085/10k))}
 * balanced source; voltage is differential peak.
 VINP IN_PLUS 0 SIN(0 0.5 1k)
 VINM IN_MINUS 0 SIN(0 -0.5 1k)
@@ -25,7 +25,7 @@ R22 INP_F OA3P 20k
 R23 OA3P 0 10k
 R24 OA3OUT OA3M 10k
 XOA3 OA3P OA3M VP15 VN15 OA3OUT RC4558_SECTION
-XBLACK OA3OUT EC_MINUS LEVEL AUDIO_OUT VP15 VN15 0 BLACKMER_AUDIO
+XBLACK OA3OUT EC_MINUS LEVEL AUDIO_OUT VP15 VN15 0 BLACKMER_AUDIO SYM=0.499
 * Threshold reference calibrated to nominal RMS input current at 85mV/10k.
 * Input amplifier differential gain = 10k/(20k+2.2k).
 * RMS detector input resistor =23.2k. RMSZERO is calibration adjustment.
@@ -55,7 +55,7 @@ C18 FILTER_NODE 0 10n
 XFILT FILTER_NODE FILTER_BUF VP15 VN15 FILTER_BUF RC4558_SECTION
 * Remove threshold reference from rectified node using differential amp.
 * Inverting differential gain 6.1/6.5*(1-1/ratio).
-.param K={max(1e-6,0.0061/0.0065*(1-1/RATIO))}
+.param K={max(1e-6,0.0061/0.0065*(1-1/RATIO)/0.9399)}
 RCTL1 FILTER_BUF CTLM 10k
 RCTL2 EC_MINUS CTLM {10k*K}
 * Ground referenced rectifier: zero gain reduction below threshold.
