@@ -35,7 +35,44 @@ jobs:
               assert Path(filename).is_file(), filename
           print('All direct includes present. No simulation run.')
           PY
+      - name: Run complete circuit DC and transient checks
+        run: |
+          cd circuit
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('160_retrofit.cir').read_text()
+          s=s.rsplit('.end',1)[0]+'''
+          .options reltol=1e-5 abstol=1e-12 vntol=1e-8
+          .control
+          set wr_singlescale
+          set wr_vecnames
+          op
+          print v(oa3out) v(level) v(ec_minus) v(audio_out) v(out_plus)
+          tran 5u 1 0 2u
+          wrdata transient.tsv v(in_plus) v(in_minus) v(oa3out) v(level) v(ec_minus) v(audio_out) v(out_plus)
+          quit
+          .endc
+          .end
+          '''
+          Path('run.cir').write_text(s)
+          PY
+          ngspice -b run.cir > simulation.log 2>&1 || { cat simulation.log; exit 1; }
+          cat simulation.log
+          test -s transient.tsv
+          python3 - <<'PY'
+          import numpy as np
+          a=np.loadtxt('transient.tsv',skiprows=1)
+          assert a[-1,0]>.999
+          t=np.arange(.9,1,1/192000)
+          for k,n in [(3,'input amplifier'),(4,'detector'),(5,'control'),(6,'I/V'),(7,'output')]:
+              y=np.interp(t,a[:,0],a[:,k])
+              h=np.abs(np.fft.rfft(y))*2/len(y)
+              fund=h[100]
+              harmonics=h[200:2001:100]
+              print(n,'DC',np.mean(y),'fundamental peak',fund,'THD',np.linalg.norm(harmonics)/max(fund,1e-30))
+          PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: 160-connected-retrofit-candidate
           path: |
@@ -46,3 +83,7 @@ jobs:
             circuit/modern_blackmer_cells.inc
             circuit/supply_generated.inc
             circuit/generate_supply.py
+            circuit/models/
+            circuit/run.cir
+            circuit/simulation.log
+            circuit/transient.tsv
