@@ -1,0 +1,65 @@
+name: Native DLL timing only
+on:
+  push:
+    branches: [measurement-20-30db]
+    paths: [.github/workflows/native-timing-only.yml]
+jobs:
+  timing:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: 160-MKII-0.1-Windows-x64-VST3-Native-160VU-Faceplate
+          run-id: 43870592650
+          github-token: ${{ github.token }}
+          path: existing
+      - name: Measure shipped native DLL
+        shell: pwsh
+        run: |
+          @'
+          import ctypes as c, pathlib, math
+          class Controls(c.Structure):
+              _fields_=[('threshold',c.c_float),('ratio',c.c_float),('makeup',c.c_float)]
+          P=c.c_void_p
+          F=c.CFUNCTYPE
+          class API(c.Structure):
+              _fields_=[('version',c.c_uint32),('latency',c.c_int),('create',F(P)),('destroy',F(None,P)),('prepare',F(c.c_int,P,c.c_double,c.c_int,c.c_int)),('stop',F(None,P)),('process',F(c.c_int,P,c.POINTER(c.POINTER(c.c_float)),c.c_int,c.POINTER(Controls),c.c_int,c.c_int)),('failed',F(c.c_uint,P))]
+          dll=c.CDLL(str(next(pathlib.Path('existing').rglob('160-native.dll')).resolve()))
+          dll.mkii_native_api.restype=c.POINTER(API)
+          a=dll.mkii_native_api().contents
+          assert a.version==3
+          rate=44100; block=441
+          for target in (10,20,30):
+              obj=a.create(); assert a.prepare(obj,rate,1,512)
+              threshold=.70710678*10**(-target/15)
+              settings=Controls(threshold,4,0)
+              gains=[]
+              for b in range(180):
+                  amp=.001 if b<40 or b>=100 else 1.
+                  arr=(c.c_float*block)(*[amp*math.sin(2*math.pi*1000*(b*block+n)/rate) for n in range(block)])
+                  pp=(c.POINTER(c.c_float)*1)(arr)
+                  assert a.process(obj,pp,block,c.byref(settings),1,0)
+                  gains.extend(list(arr))
+              print('target',target,'threshold',threshold,'failed',a.failed(obj),flush=True)
+              a.destroy(obj)
+              # Offline path may be undelayed: find actual step from output energy.
+              import statistics as st
+              env=[]
+              for n in range(0,len(gains)-44,44):
+                  t=(n+22)/rate
+                  mag=math.sqrt(sum(v*v for v in gains[n:n+44])/44)
+                  env.append((t,20*math.log10(max(mag,1e-15))))
+              lo=st.median(v for t,v in env if .2<t<.35)
+              hi=st.median(v for t,v in env if .8<t<.95)
+              gr=60+lo-hi
+              onset=next(t for t,v in env if .39<t<.5 and v>lo+20)
+              off=next(t for t,v in env if .99<t<1.1 and v<hi-20)
+              attack=next((t-onset for t,v in env if t>onset+.001 and t<.95 and lo+60-v>=.632*gr),float('nan'))
+              release=next((t-off for t,v in env if t>off+.002 and v-lo>=-.368*gr),float('nan'))
+              print('RESULT actual_GR',gr,'attack_ms',attack*1000,'release63_ms',release*1000,flush=True)
+          '@ | Set-Content timing.py
+          python timing.py
+permissions:
+  actions: read
+  contents: read
