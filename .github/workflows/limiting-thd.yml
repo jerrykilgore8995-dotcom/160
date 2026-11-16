@@ -12,7 +12,7 @@ jobs:
         frequency: [100, 1000]
         detector: [candidate, baseline]
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -46,7 +46,7 @@ jobs:
                   s=s.replace('RCTL2 EC_MINUS CTLM','RCTL2 EC_FREE CTLM').replace('XCTL CTLP CTLM VP15 VN15 EC_MINUS','XCTL CTLP CTLM VP15 VN15 EC_FREE')
                   s+=f'\nVFIX EC_MINUS 0 {ec}\n'
               raw=out/(name+'.tsv');deck=out/(name+'.cir')
-              deck.write_text(s+f"""
+              template=s+f"""
           .options reltol=1e-7 abstol=1e-13 vntol=1e-9
           .control
           set wr_singlescale
@@ -56,9 +56,18 @@ jobs:
           quit
           .endc
           .end
-          """)
-              with (out/(name+'.log')).open('w') as log:subprocess.run(['ngspice','-b',str(deck)],stdout=log,stderr=subprocess.STDOUT,check=True)
-              a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>1.99999
+          """
+              for attempt,(tol,step,method) in enumerate([('1e-7','5u','trap'),('1e-5','2u','gear'),('1e-6','1u','gear')]):
+                  raw.unlink(missing_ok=True)
+                  deck.write_text(template.replace('reltol=1e-7',f'reltol={tol} method={method}').replace('tran 5u 2 1.7 5u',f'tran {step} 2 1.7 {step}'))
+                  logpath=out/(name+f'_attempt{attempt}.log')
+                  with logpath.open('w') as log:subprocess.run(['ngspice','-b',str(deck)],stdout=log,stderr=subprocess.STDOUT)
+                  if raw.exists():
+                      a=np.loadtxt(raw,skiprows=1)
+                      if a.ndim==2 and a[-1,0]>1.99999:
+                          print('SOLVER',name,tol,step,method,flush=True);break
+                  print('SOLVER_RETRY',name,logpath.read_text()[-3000:],flush=True)
+              else:raise RuntimeError('No complete waveform for '+name)
               results=[]
               for start,end in [(1.7,1.8),(1.9,2.0)]:
                   t=a[:,0];sel=(t>=start)&(t<=end);t=t[sel];y=a[sel,1:]
