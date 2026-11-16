@@ -28,9 +28,13 @@ public:
         return false;
     }
 
-    bool prepare(double rate,int channels) {return instance && api->prepare(instance,rate,channels);}
+    bool prepare(double rate,int channels,int hostBlock) {
+        if (!instance || !api->prepare(instance,rate,channels,hostBlock)) return false;
+        delay=playbackLatency(hostBlock);
+        return true;
+    }
     void stop() {if (instance) api->stop(instance);}
-    int latency() const {return instance?api->latency:0;}
+    int latency() const {return instance?(delay?delay:api->latency):0;}
     unsigned failedSolves() const {return instance?api->failedSolves(instance):0;}
     float controlVolts() const {return instance?api->controlVolts(instance):0;}
     bool process(float* const* audio,int count,Controls settings,bool offline,bool dry=false) {
@@ -41,11 +45,13 @@ private:
     void close() {
         if (instance) api->destroy(instance);
         instance=nullptr;
+        delay=0;
         api=nullptr;
         if (module) FreeLibrary(module);
         module=nullptr;
     }
     HMODULE module=nullptr;
+    int delay=0;
     void* instance=nullptr;
     const Api* api=nullptr;
 };

@@ -12,26 +12,27 @@
 #include <numbers>
 #include <vector>
 
-bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels) {
+bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds) {
     using Clock=std::chrono::steady_clock;
-    constexpr int quantum=128;
-    const int frames=(rate*3/quantum)*quantum;
-    const auto signal=[rate](int n,int channel) {
+    const int frames=(rate*seconds/quantum)*quantum;
+    const auto signal=[rate,seconds](int n,int channel) {
         const double t=static_cast<double>(n)/rate, angle=2*std::numbers::pi*t;
-        const double envelope=(t>0.28 && t<0.43)?0.8:0.22;
-        if (n%quantum==60 && (n/quantum)%41==3) return 0.75f;
+        const double phase=seconds>3? t-std::floor(t):t;
+        const double envelope=(phase>0.28 && phase<0.43)?0.8:0.22;
+        if (n%128==60 && (n/128)%41==3) return 0.75f;
         return static_cast<float>(envelope*(0.57*std::sin(77*angle+channel)+0.19*std::sin(593*angle)
                                    +0.11*std::sin(3241*angle)+0.08*std::sin(6771*angle)+0.05*std::sin(12949*angle)));
     };
     mkii::native::Client reference;
-    if (!reference.open(dllPath.toWideCharPointer()) || !reference.prepare(rate,channels))
+    if (!reference.open(dllPath.toWideCharPointer()) || !reference.prepare(rate,channels,quantum))
         return false;
     const int expectedLatency=reference.latency();
     const int testFrames=frames+expectedLatency;
-    juce::AudioBuffer<float> expected(channels,testFrames);
+    juce::AudioBuffer<float> input(channels,testFrames);
     for (int c=0;c<channels;++c)
         for (int i=0;i<testFrames;++i)
-            expected.setSample(c,i,signal(i,c));
+            input.setSample(c,i,signal(i,c));
+    auto expected=input;
     if (!reference.process(expected.getArrayOfWritePointers(),testFrames,{},true) ||
         reference.failedSolves()!=0)
         return false;
@@ -54,8 +55,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
         const int count=std::min(quantum,testFrames-offset);
         audio.setSize(channels,count,false,false,true);
         for (int c=0;c<channels;++c)
-            for (int i=0;i<count;++i)
-                audio.setSample(c,i,signal(offset+i,c));
+            audio.copyFrom(c,0,input,c,offset,count);
         const auto due=start+std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(double(offset)/rate));
         clock.waitUntil(due);
         const auto begin=Clock::now();
@@ -69,13 +69,14 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
                 maxError=std::max(maxError,std::abs(value-target));
                 const int source=offset+i-latency;
                 if (source>=0) {
-                    const float dry=signal(source,c);
+                    const float dry=input.getSample(c,source);
                     if (value==dry && std::abs(target-dry)>0.00002) ++unexpectedDrySamples;
                 }
             }
         }
     }
-    std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), latency "<<latency
+    std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), "<<quantum
+             <<"-sample host blocks, "<<seconds<<" s test, latency "<<latency
              <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs
              <<" ms, unexpected dry samples "<<unexpectedDrySamples<<std::endl;
     return unexpectedDrySamples==0 && maxError<0.00002 && maxCallbackMs<quantum*1000.0/rate;
@@ -121,8 +122,11 @@ int main(int argc, char** argv) {
 #ifdef MKII_NATIVE
         for (const int rate : {44100,48000}) {
             plugin->releaseResources();
-            playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),rate,layout.size()) && playbackPassed;
+            playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),rate,layout.size(),128,3) && playbackPassed;
         }
+        plugin->releaseResources();
+        playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),44100,layout.size(),512,12)
+                       && playbackPassed;
 #else
         plugin->setNonRealtime(false);
         plugin->prepareToPlay(44100, 256);

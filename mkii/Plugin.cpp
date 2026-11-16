@@ -187,8 +187,9 @@ public:
     }
 
 #ifdef MKII_NATIVE
-    void prepareToPlay(double sampleRate, int) override {
-        ready=engine.prepare(sampleRate,getTotalNumInputChannels());
+    void prepareToPlay(double sampleRate,int blockSize) override {
+        ready=engine.prepare(sampleRate,getTotalNumInputChannels(),blockSize);
+        if (ready) setLatencySamples(engine.latency());
         status.store(ready?live:failed);
     }
 

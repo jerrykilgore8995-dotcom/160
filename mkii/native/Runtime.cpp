@@ -19,8 +19,8 @@ const Api runtime{
         catch (...) {return nullptr;}
     },
     [](void* instance) {delete static_cast<Pipeline*>(instance);},
-    [](void* instance,double rate,int channels) -> int {
-        try {return engine(instance).prepare(rate,channels);}
+    [](void* instance,double rate,int channels,int hostBlock) -> int {
+        try {return engine(instance).prepare(rate,channels,mkii::native::playbackLatency(hostBlock));}
         catch (...) {engine(instance).stop();return 0;}
     },
     [](void* instance) {engine(instance).stop();},
