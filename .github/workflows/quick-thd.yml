@@ -7,7 +7,7 @@ on:
 jobs:
   measure:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -25,7 +25,7 @@ jobs:
           python3 - <<'PY'
           import measure_threshold as m
           import inspect
-          s=inspect.getsource(m.measure).replace('max(1.5,20/freq)','max(0.25,20/freq)').replace('step=2e-6','step=5e-6').replace('raw.unlink()','pass')
+          s=inspect.getsource(m.measure).replace('max(1.5,20/freq)','max(1.0,20/freq)').replace('step=2e-6','step=5e-6').replace('raw.unlink()','pass')
           exec(s,m.__dict__)
           rows=m.batch([('quick_no_gr',3,1000,4),('quick_max_gr',.01,1000,4)],'quick.csv')
           print('RELATIVE GR dB',rows[0]['gain_dB']-rows[1]['gain_dB'],flush=True)
