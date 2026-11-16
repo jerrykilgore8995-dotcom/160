@@ -1,0 +1,92 @@
+name: 160VU hard knee transfer at 4 to 1
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/hard-knee.yml
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        level: [-12, -6, -3, -2, -1, -0.5, -0.25, 0, 0.25, 0.5, 1, 2, 3, 4, 5, 6, 8, 10, 12, 13.333, 14, 16, 18]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          LEVEL=${{ matrix.level }} python3 - <<'PY'
+          import numpy as np, pathlib, subprocess, re, os, csv
+          f=1000; level=float(os.environ['LEVEL']); variant='909k_22u'
+          assert 'RT=909k CTVAL=22u' in pathlib.Path('modern_blackmer_cells.inc').read_text()
+          base=pathlib.Path('160_retrofit.cir').read_text().rsplit('.end',1)[0]
+          base=re.sub(r'RATIO=[^ ]+','RATIO=4',base,count=1)
+          # Nominal threshold reference 0.115 Vrms; independent input amplitude points.
+          vrms=.115*10**(level/20); peak=vrms*np.sqrt(2)/2
+          base=base.replace('SIN(0 0.5 1k)',f'SIN(0 {peak} 1000)').replace('SIN(0 -0.5 1k)',f'SIN(0 {-peak} 1000)')
+          out=pathlib.Path('limiting');out.mkdir(exist_ok=True)
+          def run(name,th,ec=None):
+              s=re.sub(r'THRESHV=[^ ]+',f'THRESHV={th}',base)
+              if ec is not None:
+                  # Disconnect control amplifier output from VCA, retaining its feedback.
+                  s=s.replace('RCTL2 EC_MINUS CTLM','RCTL2 EC_FREE CTLM').replace('XCTL CTLP CTLM VP15 VN15 EC_MINUS','XCTL CTLP CTLM VP15 VN15 EC_FREE')
+                  s+=f'\nVFIX EC_MINUS 0 {ec}\n'
+              raw=out/(name+'.tsv');deck=out/(name+'.cir')
+              template=s+f"""
+          .options reltol=1e-7 abstol=1e-13 vntol=1e-9
+          .control
+          set wr_singlescale
+          set wr_vecnames
+          tran 5u 2 1.7 5u
+          wrdata {raw} v(in_plus) v(in_minus) v(oa3out) v(audio_out) v(out_plus) v(level) v(ec_minus)
+          quit
+          .endc
+          .end
+          """
+              for attempt,(tol,step,method) in enumerate([('1e-7','5u','trap'),('1e-5','2u','gear'),('1e-6','1u','gear')]):
+                  raw.unlink(missing_ok=True)
+                  deck.write_text(template.replace('reltol=1e-7',f'reltol={tol} method={method}').replace('tran 5u 2 1.7 5u',f'tran {step} 2 1.7 {step}'))
+                  logpath=out/(name+f'_attempt{attempt}.log')
+                  with logpath.open('w') as log:subprocess.run(['ngspice','-b',str(deck)],stdout=log,stderr=subprocess.STDOUT)
+                  if raw.exists():
+                      a=np.loadtxt(raw,skiprows=1)
+                      if a.ndim==2 and a[-1,0]>1.99999:
+                          print('SOLVER',name,tol,step,method,flush=True);break
+                  print('SOLVER_RETRY',name,logpath.read_text()[-3000:],flush=True)
+              else:raise RuntimeError('No complete waveform for '+name)
+              results=[]
+              for start,end in [(1.7,1.8),(1.9,2.0)]:
+                  t=a[:,0];sel=(t>=start)&(t<=end);t=t[sel];y=a[sel,1:]
+                  w=np.sqrt(np.gradient(t));ph=2*np.pi*f*t
+                  X=np.column_stack([np.ones(len(t))]+[v for k in range(1,21) for v in (np.cos(k*ph),np.sin(k*ph))])
+                  b=np.linalg.lstsq(X*w[:,None],y*w[:,None],rcond=None)[0]
+                  h=np.hypot(b[1::2],b[2::2])
+                  row=dict(detector=variant,frequency_Hz=f,case=name,window_start=start,ratio=4,threshold=th,EC_DC=b[0,6],EC_2f_Vpk=h[1,6],detector_2f_Vpk=h[1,5])
+                  for stage,col in [('input_amp',2),('vca_iv',3),('final',4)]:
+                      row[stage+'_Vrms']=h[0,col]/np.sqrt(2)
+                      row[stage+'_THD_percent']=100*np.linalg.norm(h[1:,col])/max(h[0,col],1e-30)
+                      for k in range(2,21):row[f'{stage}_K{k}_dBc']=20*np.log10(max(h[k-1,col]/max(h[0,col],1e-30),1e-30))
+                  print('LIMITING',row,flush=True);results.append(row)
+              raw.unlink()
+              return results
+          rows=run('no_gr',3)+run('knee',.115)
+          gr=20*np.log10(rows[1]['final_Vrms']/rows[3]['final_Vrms'])
+          print('KNEE_RESULT',dict(input_relative_nominal_threshold_dB=level,input_Vrms=vrms,output_Vrms=rows[3]['final_Vrms'],uncompressed_output_Vrms=rows[1]['final_Vrms'],GR_dB=gr,settling_dB=20*np.log10(rows[3]['final_Vrms']/rows[2]['final_Vrms'])),flush=True)
+          print('FINAL_GR_dB',20*np.log10(rows[1]['final_Vrms']/rows[3]['final_Vrms']),flush=True)
+          print('SETTLING_CHECK_dB',20*np.log10(rows[3]['final_Vrms']/rows[2]['final_Vrms']),flush=True)
+          with (out/'summary.csv').open('w') as file:
+              w=csv.DictWriter(file,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: knee-${{ matrix.level }}
+          path: circuit/limiting/
