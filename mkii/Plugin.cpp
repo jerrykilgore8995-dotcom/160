@@ -295,7 +295,14 @@ private:
             status.store(failed);
             return;
         }
-        const native::Controls controls{threshold->load(),ratio->load(),output->load()};
+        // VST3 transfers normalized values, which can move a parameter by
+        // a float rounding step. Restore the parameter's declared grid.
+        const auto quantize=[](float value,double scale) {
+            return static_cast<float>(std::round(static_cast<double>(value)*scale)/scale);
+        };
+        const native::Controls controls{quantize(threshold->load(),1000),
+                                        quantize(ratio->load(),100),
+                                        quantize(output->load(),10)};
         const auto okay=engine.process(audio.getArrayOfWritePointers(),audio.getNumSamples(),
                                        controls,isNonRealtime(),dry);
         status.store(okay && !engine.failedSolves()?live:failed);

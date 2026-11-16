@@ -47,6 +47,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
     juce::AudioBuffer<float> audio(channels,quantum);
     juce::MidiBuffer midi;
     double maxError=0,maxCallbackMs=0;
+    unsigned unexpectedDrySamples=0;
     mkii::native::PlaybackClock clock;
     const auto start=Clock::now();
     for (int offset=0;offset<testFrames;offset+=quantum) {
@@ -66,12 +67,18 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
                 if (!std::isfinite(value)) return false;
                 const double target=expected.getSample(c,offset+i);
                 maxError=std::max(maxError,std::abs(value-target));
+                const int source=offset+i-latency;
+                if (source>=0) {
+                    const float dry=signal(source,c);
+                    if (value==dry && std::abs(target-dry)>0.00002) ++unexpectedDrySamples;
+                }
             }
         }
     }
     std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), latency "<<latency
-             <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs<<" ms"<<std::endl;
-    return maxError<0.00002 && maxCallbackMs<quantum*1000.0/rate;
+             <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs
+             <<" ms, unexpected dry samples "<<unexpectedDrySamples<<std::endl;
+    return unexpectedDrySamples==0 && maxError<0.00002 && maxCallbackMs<quantum*1000.0/rate;
 }
 #endif
 
