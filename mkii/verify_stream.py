@@ -10,7 +10,8 @@ import time
 
 import numpy as np
 
-worker, deck, report = [Path(p).resolve() for p in sys.argv[1:]]
+worker, deck, report = [Path(p).resolve() for p in sys.argv[1:4]]
+native_capture = Path(sys.argv[4]) if len(sys.argv) == 5 else None
 rate = 44100
 settle = 0.05
 scale = 13.790836925122916
@@ -112,6 +113,19 @@ results = {
     "reference": spectrum(target),
     "worker": spectrum(audio),
 }
+if native_capture is not None:
+    native = np.loadtxt(native_capture)[:, 0]
+    assert native.shape == target.shape and np.all(np.isfinite(native))
+    native_error = np.sqrt(np.mean((native - target)**2))
+    native_spectrum = spectrum(native)
+    results["native"] = {
+        **native_spectrum,
+        "waveform_rmse_dBFS": 20*np.log10(native_error),
+    }
+    assert native_error < 0.003*np.sqrt(np.mean(target**2)), "Native waveform parity failed"
+    relative_thd_error = abs(native_spectrum["thd_percent"] /
+                             results["reference"]["thd_percent"] - 1)
+    assert relative_thd_error < 0.06, "Native THD parity failed"
 report.write_text(json.dumps(results, indent=2) + "\n")
 print(json.dumps(results, indent=2))
 assert rms > 0.001 and np.all(np.isfinite(audio)), "Invalid reference or worker output"
