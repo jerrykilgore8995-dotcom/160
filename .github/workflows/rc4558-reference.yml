@@ -1,0 +1,63 @@
+name: RC4558 TI reference THD
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/rc4558-reference.yml
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          cd circuit
+          python3 - <<'PY'
+          import pathlib,subprocess,numpy as np
+          out=pathlib.Path('4558_reference');out.mkdir(exist_ok=True)
+          for mode in ['quiet','noisy']:
+              subprocess.run(['python3','generate_supply.py','--seconds','0.3']+(['--quiet'] if mode=='quiet' else []),check=True)
+              for freq in [1000,100,5000,10000]:
+                  name=f'{mode}_{freq}';raw=out/(name+'.tsv');deck=out/(name+'.cir')
+                  deck.write_text(f"""TI RC4558 reference
+          .include RC4558.301
+          .include supply_generated.inc
+          .temp 25
+          VIN IN 0 SIN(0 4.242640687119285 {freq})
+          XU IN OUT VP15 VN15 OUT RC4558
+          RL OUT 0 2k
+          .options reltol=1e-8 abstol=1e-14 vntol=1e-10
+          .control
+          set wr_singlescale
+          set wr_vecnames
+          tran 0.25u 0.25 0.15 0.25u
+          wrdata {raw} v(out)
+          quit
+          .endc
+          .end
+          """)
+                  with (out/(name+'.log')).open('w') as log:subprocess.run(['ngspice','-b',str(deck)],check=True,stdout=log,stderr=subprocess.STDOUT)
+                  a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>.249999
+                  t=a[:,0];w=np.sqrt(np.gradient(t));p=2*np.pi*freq*t
+                  X=np.column_stack([np.ones(len(t))]+[v for k in range(1,21) for v in (np.cos(k*p),np.sin(k*p))])
+                  y=a[:,1];b=np.linalg.lstsq(X*w[:,None],y*w,rcond=None)[0];h=np.hypot(b[1::2],b[2::2])
+                  residual=y-X[:,:3]@b[:3]
+                  # Uniform resampling and FFT band integration, excluding DC and fundamental.
+                  tu=np.arange(400000)*.25e-6+.15
+                  u=np.interp(tu,t,residual)
+                  F=np.fft.rfft(u)/len(u);ff=np.fft.rfftfreq(len(u),.25e-6)
+                  band=(ff>=20)&(ff<=20000)
+                  thdn=np.sqrt(2*np.sum(abs(F[band])**2))/(h[0]/np.sqrt(2))
+                  row=dict(mode=mode,frequency_Hz=freq,output_RMS=h[0]/np.sqrt(2),THD_percent=100*np.linalg.norm(h[1:])/h[0],residual_20Hz_20k_percent=100*thdn)
+                  row.update({f'K{k}_dBc':20*np.log10(max(h[k-1]/h[0],1e-30)) for k in range(2,21)})
+                  print('REFERENCE',row,flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rc4558-reference
+          path: circuit/4558_reference/
