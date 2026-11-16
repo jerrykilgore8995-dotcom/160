@@ -38,6 +38,7 @@ jobs:
           XU P M VP VN OUT RC4558
           .ends
           """
+          # Audit corrected bootstrap junction revision, after default timing selection.
           rows=[]
           for freq in [1000,100,10000]:
               for level in [0,18,-30,12,21]:
