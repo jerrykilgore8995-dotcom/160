@@ -1,0 +1,27 @@
+* User-supplied model; provenance and fit not independently verified.
+.model BC361 PNP (
++ IS=6.5e-14
++ BF=130
++ NF=1.0
++ VAF=65
++ IKF=0.25
++ ISE=1.4e-11
++ NE=1.5
++ BR=4
++ NR=1.0
++ VAR=20
++ IKR=0.03
++ ISC=2e-13
++ NC=2.0
++ RB=1.8
++ RE=0.6
++ RC=0.9
++ CJE=35p
++ VJE=0.65
++ MJE=0.33
++ CJC=12p
++ VJC=0.5
++ MJC=0.33
++ TF=0.45n
++ TR=50n
++ )
