@@ -59,9 +59,9 @@ Result measure(double rate,bool stress,int channel) {
     return result;
 }
 
-bool playback(double rate,int channels) {
+bool playback(double rate,int channels,int delay=mkii::native::Pipeline::latency) {
     mkii::native::Pipeline engine;
-    if (!engine.prepare(rate,channels)) return false;
+    if (!engine.prepare(rate,channels,delay)) return false;
     using Clock=std::chrono::steady_clock;
     mkii::native::PlaybackClock clock;
     const auto begin=Clock::now();
@@ -87,9 +87,10 @@ bool playback(double rate,int channels) {
     }
     const auto missed=engine.missedSamples();
     const auto failures=engine.failedSolves();
-    std::printf("%.0f Hz, %d channel(s), 128-sample callback max %.3f ms, "
+    std::printf("%.0f Hz, %d channel(s), delay %d, peak required delay %llu, callback max %.3f ms, "
                 "late callbacks %u, late samples %llu, failed solves %u, output energy %.6f\n",
-                rate,channels,peakMs,lateCallbacks,static_cast<unsigned long long>(missed),failures,energy);
+                rate,channels,delay,static_cast<unsigned long long>(engine.requiredDelaySamples()),
+                peakMs,lateCallbacks,static_cast<unsigned long long>(missed),failures,energy);
     return !lateCallbacks && !missed && !failures && std::isfinite(energy) && energy>0.1;
 }
 
@@ -108,6 +109,13 @@ int capture() {
 int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--capture")==0) return capture();
     const bool gate=argc==2 && std::strcmp(argv[1],"--gate")==0;
+    if (argc==3 && std::strcmp(argv[1],"--delay")==0) {
+        const int delay=std::atoi(argv[2]);
+        if (delay<128) return 2;
+        const bool one=playback(44100.,1,delay);
+        const bool two=playback(44100.,2,delay);
+        return one&&two?0:4;
+    }
     if (argc==2 && std::strcmp(argv[1],"--playback")==0) {
         bool pass=true;
         for (const double rate : {44100.,48000.})

@@ -20,6 +20,13 @@ int main(int argc,char** argv) {
          "  if (signature==signature_hz48000) return solve_hz48000;\n"
          "  if (signature==signature_hz96000) return solve_hz96000;\n"
          "  return nullptr;\n"
+         "}\n"
+         "using GeneratedResidual = void(*)(double*,const double*);\n"
+         "inline GeneratedResidual findGeneratedResidual(double rate) {\n"
+         "  if (rate==44100) return rhs_hz44100;\n"
+         "  if (rate==48000) return rhs_hz48000;\n"
+         "  if (rate==96000) return rhs_hz96000;\n"
+         "  return nullptr;\n"
          "}\n";
     return out ? 0 : 5;
 }

@@ -134,6 +134,9 @@ public:
         if (!matrix.prepare()) return false;
         cacheNonlinearSlots();
         prepareLinear();
+#if __has_include("GeneratedSolve.hpp")
+        generatedResidual=findGeneratedResidual(rate);
+#endif
         accept(true);
         inverse = 1.5*rate;
         history1 = -2.0*rate;
@@ -166,7 +169,18 @@ public:
     double controlVolts() const { return x[deck.control]; }
     double levelVolts() const { return x[deck.level]; }
     int operations() const { return matrix.operationCount(); }
-    void emitSolver(std::ostream& code,std::string_view name) const {matrix.emit(code,name);}
+    void emitSolver(std::ostream& code,std::string_view name) const {
+        matrix.emit(code,name);
+        code<<"inline void rhs_"<<name<<"(double* __restrict y,const double* __restrict v) {\n";
+        for (const auto& row : linearRows) {
+            code<<"    double r"<<row.row<<"=y["<<row.row<<"];\n";
+            for (int j=row.begin;j<row.end;++j)
+                code<<"    r"<<row.row<<"+="<<std::hexfloat<<terms[j].g<<std::defaultfloat
+                    <<"*v["<<terms[j].column<<"];\n";
+            code<<"    y["<<row.row<<"]=r"<<row.row<<";\n";
+        }
+        code<<"}\n";
+    }
     unsigned failures() const { return misses; }
     unsigned refinedSamples() const { return subdivisions; }
     double rawOutput() const { return x[deck.out]; }
@@ -391,6 +405,10 @@ private:
 
     void stampStep() {
         matrix.startIteration(sampleRhs);
+#if __has_include("GeneratedSolve.hpp")
+        if (generatedResidual) generatedResidual(matrix.rhs.data(),x.data());
+        else
+#endif
         for (const auto& row : linearRows) {
             double sum=matrix.rhs[row.row];
             for (int j=row.begin;j<row.end;++j)
@@ -563,6 +581,9 @@ private:
     struct LinearRow {int row,begin,end;};
     std::vector<KnownTerm> knownTerms;
     std::vector<LinearRow> linearRows;
+#if __has_include("GeneratedSolve.hpp")
+    GeneratedResidual generatedResidual=nullptr;
+#endif
     std::vector<int> diodeStorage,bjtStorage;
     std::vector<double> constantRhs,sampleRhs;
     Sparse matrix;

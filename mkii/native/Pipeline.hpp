@@ -26,7 +26,7 @@ struct Controls {
 // The callback submits and reads samples without locking or waiting in live mode.
 class Pipeline {
 public:
-    static constexpr int latency = 3072;
+    static constexpr int latency = 1024;
     static constexpr std::uint64_t capacity = 16384;
     static_assert((capacity & (capacity-1))==0);
 
@@ -35,9 +35,11 @@ public:
     Pipeline(const Pipeline&)=delete;
     Pipeline& operator=(const Pipeline&)=delete;
 
-    bool prepare(double rate,int channels) {
+    bool prepare(double rate,int channels,int delaySamples=latency) {
         stop();
-        if (channels<1 || channels>2) return false;
+        if (channels<1 || channels>2 || delaySamples<128 || delaySamples>=static_cast<int>(capacity)-512)
+            return false;
+        delay=static_cast<std::uint64_t>(delaySamples);
         for (int i=0;i<channels;++i) {
             auto& v=voices[i];
             if (!v.solver.prepare(rate) || !v.prepareWake()) return false;
@@ -68,6 +70,7 @@ public:
         active=0;
         position=0;
         underruns=0;
+        maxRequiredDelay=0;
         control=0;
     }
 
@@ -101,18 +104,20 @@ public:
             control=0;
             for (int c=0;c<active;++c) {
                 auto& v=voices[c];
-                const auto need=position+frames>latency ? position+frames-latency : 0;
+                const auto need=position+frames>delay ? position+frames-delay : 0;
                 if (waitForRender) {
                     while (v.completed.load(std::memory_order_acquire)<need)
                         std::this_thread::sleep_for(std::chrono::microseconds(50));
                 }
                 const auto available=v.completed.load(std::memory_order_acquire);
+                if (!waitForRender)
+                    maxRequiredDelay=std::max(maxRequiredDelay,position+frames-available);
                 for (int i=0;i<frames;++i) {
-                    if (position+i<latency) {
+                    if (position+i<delay) {
                         channels[c][offset+i]=0;
                         continue;
                     }
-                    const auto index=position+i-latency;
+                    const auto index=position+i-delay;
                     if (dry) {
                         channels[c][offset+i]=v.input[index&(capacity-1)].value;
                     } else if (index>=available) {
@@ -134,6 +139,7 @@ public:
     }
 
     std::uint64_t missedSamples() const {return underruns;}
+    std::uint64_t requiredDelaySamples() const {return maxRequiredDelay;}
     unsigned failedSolves() const {
         unsigned count=0;
         for (int i=0;i<active;++i) count+=voices[i].failed.load(std::memory_order_relaxed);
@@ -183,7 +189,7 @@ private:
                     waitForInput();
                     continue;
                 }
-                const auto end=std::min(next+32,published);
+                const auto end=std::min(next+8,published);
                 for (;next<end;++next) {
                     const auto& s=input[next&(capacity-1)];
                     const auto& k=s.settings;
@@ -208,7 +214,7 @@ private:
     };
     std::array<Voice,2> voices;
     int active=0;
-    std::uint64_t position=0,underruns=0;
+    std::uint64_t position=0,underruns=0,delay=latency,maxRequiredDelay=0;
     float control=0;
 };
 }
