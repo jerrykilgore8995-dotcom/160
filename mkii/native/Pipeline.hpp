@@ -26,7 +26,7 @@ struct Controls {
 // The callback submits and reads samples without locking or waiting in live mode.
 class Pipeline {
 public:
-    static constexpr int latency = 1024;
+    static constexpr int latency = 512;
     static constexpr std::uint64_t capacity = 16384;
     static_assert((capacity & (capacity-1))==0);
 

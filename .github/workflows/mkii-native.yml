@@ -85,6 +85,6 @@ jobs:
           Copy-Item staging/native-parity.json,smoke-out.txt,mkii/native/README.md release
       - uses: actions/upload-artifact@v4
         with:
-          name: 160-MKII-0.1-Windows-x64-VST3-Native-Low-Latency
+          name: 160-MKII-0.1-Windows-x64-VST3-Native-512
           path: release
           if-no-files-found: error

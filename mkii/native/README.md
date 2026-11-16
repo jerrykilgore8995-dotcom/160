@@ -1,6 +1,6 @@
 # 160 MKII 0.1 Native Windows x64 VST3
 
-Install the entire `160 MKII.vst3` bundle. This build requires AVX2. It reports 1,024 samples of latency to the host, about 23.2 ms at 44.1 kHz. Mono runs one circuit and stereo runs two independent circuits. Threshold, compression ratio, and output gain are available during playback. The default threshold is 0.2 V RMS, matching the native circuit’s initialization. Offline VST3 processing uses the same native circuit.
+Install the entire `160 MKII.vst3` bundle. This build requires AVX2. It reports 512 samples of latency to the host, about 11.6 ms at 44.1 kHz. Mono runs one circuit and stereo runs two independent circuits. Threshold, compression ratio, and output gain are available during playback. The default threshold is 0.2 V RMS, matching the native circuit’s initialization. Offline VST3 processing uses the same native circuit.
 
 The plugin compiles the connected 160 retrofit deck into a modified nodal system, including the RC4558, THAT2181B and 4301RMS manufacturer models and the discrete BC341/BC361 output stage. It keeps the detector, coupling and driver charge histories. The solver generates specialized sparse elimination and linear residual schedules for 44.1, 48 and 96 kHz, and substeps difficult transients. It uses one in-process worker per channel and a fixed-size ring for the audio callback. During playback, the callback submits input and retrieves the delayed output. If a worker misses a deadline, that sample uses the delayed input and the interface indicates a processing miss.
 
