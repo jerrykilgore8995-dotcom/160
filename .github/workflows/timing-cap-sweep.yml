@@ -1,0 +1,78 @@
+name: 4301 timing capacitor sweep
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/timing-cap-sweep.yml
+jobs:
+  sweep:
+    strategy:
+      fail-fast: false
+      matrix:
+        cap: [3.9, 4.7, 6.8, 8.2, 10.576923, 15]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          CAP=${{ matrix.cap }} python3 - <<'PY'
+          import numpy as np, pathlib, subprocess, re, os, csv
+          from concurrent.futures import ThreadPoolExecutor
+          cap=float(os.environ['CAP'])
+          p=pathlib.Path('modern_blackmer_cells.inc')
+          p.write_text(re.sub(r'CTVAL=10.576923u',f'CTVAL={cap}u',p.read_text()))
+          base=pathlib.Path('160_retrofit.cir').read_text().rsplit('.end',1)[0]
+          out=pathlib.Path('timing_sweep');out.mkdir(exist_ok=True)
+          def run(step):
+              # Begin at nominal threshold; return to threshold after the step.
+              th=.7071067811865476/10**(step/20)
+              low=10**(-step/20)
+              ratio=120
+              if step==14:
+                  th=.148305;low=.2;ratio=4
+              s=re.sub(r'THRESHV=[^ ]+',f'THRESHV={th}',base)
+              s=re.sub(r'RATIO=[^ ]+',f'RATIO={ratio}',s,count=1)
+              for n,node,sgn in [('VINP','IN_PLUS',1),('VINM','IN_MINUS',-1)]:
+                  s=re.sub(r'^'+n+r' .*$',f'B{n} {node} 0 V={sgn*.5}*v(amp)*sin(2*pi*1000*time)',s,flags=re.M)
+              s+=f'\nVAMP amp 0 PWL(0 {low} 1 {low} 1.000001 1 2 1 2.000001 {low} 3 {low})\n'
+              p=out/f'{step}.cir'; raw=out/f'{step}.tsv'
+              p.write_text(s+f'\n.control\nset wr_singlescale\nset wr_vecnames\ntran 5u 3 0 5u\nwrdata {raw} v(out_plus) v(ec_minus) v(level)\nquit\n.endc\n.end\n')
+              with (out/f'{step}.log').open('w') as l:subprocess.run(['ngspice','-b',str(p)],stdout=l,stderr=subprocess.STDOUT,check=True)
+              a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>2.999
+              t=np.arange(300000)*1e-5;tt=t.reshape(-1,100)[:,0]+.0005
+              y=np.interp(t,a[:,0],a[:,1]).reshape(-1,100)
+              ph=2*np.pi*np.arange(100)/100
+              mag=2*np.hypot(y@np.cos(ph),y@np.sin(ph))/100
+              amp=np.where((tt>1)&(tt<2),1,low)
+              gain=20*np.log10(np.maximum(mag/amp,1e-20))
+              baseline=np.median(gain[(tt>.85)&(tt<.99)])
+              gr=baseline-np.median(gain[(tt>1.85)&(tt<1.99)])
+              z=baseline-gain
+              def crossing(start,end,target,up):
+                  ids=np.flatnonzero((tt>=start+.001)&(tt<end)&((z>=target) if up else (z<=target)))
+                  return (tt[ids[0]]-start)*1000 if len(ids) else float('nan')
+              at=crossing(1,2,.632*gr,True)
+              r20=crossing(2,3,.8*gr,False);r80=crossing(2,3,.2*gr,False)
+              rate=.6*gr/((r80-r20)/1000) if r80>r20 else float('nan')
+              row=dict(cap_uF=cap,step_dB=step,ratio=ratio,actual_GR=gr,attack_ms=at,release_63_ms=crossing(2,3,.368*gr,False),release_01_ms=crossing(2,3,.1,False),release_mid_dB_per_s=rate)
+              print('TIMING',row,flush=True)
+              np.savetxt(out/f'{step}_envelope.csv',np.c_[tt,z],delimiter=',',header='seconds,GR_dB')
+              raw.unlink()
+              return row
+          with ThreadPoolExecutor(max_workers=2) as ex: rows=list(ex.map(run,[10,20,30,14]))
+          with (out/'summary.csv').open('w') as f:
+              w=csv.DictWriter(f,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cap-${{ matrix.cap }}-timing
+          path: circuit/timing_sweep/
