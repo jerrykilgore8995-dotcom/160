@@ -1,0 +1,56 @@
+name: RMS and input stage audit
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/rms-input-audit.yml
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          python3 - <<'PY'
+          import numpy as np, pathlib, subprocess, re
+          from concurrent.futures import ThreadPoolExecutor
+          out=pathlib.Path('rms_audit');out.mkdir(exist_ok=True)
+          p=pathlib.Path('modern_blackmer_cells.inc')
+          s=p.read_text().replace('R38 RMS_AC RMS_IN 23.2k','R38 RMS_AC RMS_SENSE 23.2k\nVIRS RMS_SENSE RMS_IN 0').replace('RTIME IT VN {RT}','RTIME IT IT_SENSE {RT}\nVIT IT_SENSE VN 0').replace('XDETECT IN IT CT LEVEL VN VP REF 4301RMS','XDETECT IN IT CT DETOUT VN VP REF 4301RMS\nVDET DETOUT LEVEL 0')
+          p.write_text(s)
+          base=pathlib.Path('160_retrofit.cir').read_text().rsplit('.end',1)[0]
+          def run(db):
+              peak=np.sqrt(2)*10**(db/20)
+              s=base.replace('THRESHV=0.1','THRESHV=3').replace('SIN(0 0.5 1k)',f'SIN(0 {peak/2} 1k)').replace('SIN(0 -0.5 1k)',f'SIN(0 {-peak/2} 1k)')
+              nodes='v(in_plus) v(in_minus) v(oa3out) v(xblack.rms_ac) v(xblack.rms_in) i(v.xblack.virs) v(xblack.xdet.it) i(v.xblack.xdet.vit) v(xblack.xdet.ct) v(level) i(v.xblack.xdet.vdet) v(ec_minus) v(out_plus)'
+              raw=out/f'{db}.tsv';deck=out/f'{db}.cir'
+              deck.write_text(s+f'\n.options reltol=1e-7 abstol=1e-13 vntol=1e-9\n.control\nset wr_singlescale\nset wr_vecnames\ntran 2u .8 .78 2u\nwrdata {raw} {nodes}\nquit\n.endc\n.end\n')
+              with (out/f'{db}.log').open('w') as l:subprocess.run(['ngspice','-b',str(deck)],stdout=l,stderr=subprocess.STDOUT,check=True)
+              a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>.79999
+              t=a[:,0];w=np.sqrt(np.gradient(t));ph=2*np.pi*1000*t
+              X=np.column_stack([np.ones(len(t))]+[v for k in range(1,21) for v in (np.cos(k*ph),np.sin(k*ph))])
+              b=np.linalg.lstsq(X*w[:,None],a[:,1:]*w[:,None],rcond=None)[0]
+              h=np.hypot(b[1::2],b[2::2]);q=b[1]+1j*b[2]
+              db20=lambda x:20*np.log10(max(abs(x),1e-30))
+              row=dict(input_dBV=db,oa3_output_Vrms=h[0,2]/np.sqrt(2),oa3_THD_percent=100*np.linalg.norm(h[1:,2])/h[0,2],oa3_gain_dB=db20(q[2]/(q[0]-q[1])),RMS_pin_Z_1k_ohm=abs(q[4]/q[5]),RMS_branch_Z_1k_ohm=abs(q[2]/q[5]),RMS_input_current_rms_A=h[0,5]/np.sqrt(2),IT_voltage_V=b[0,6],IT_current_A=b[0,7],CT_DC_V=b[0,8],CT_2k_ripple_Vpk=h[1,8],detector_DC_V=b[0,9],detector_2k_ripple_Vpk=h[1,9],detector_load_DC_A=b[0,10],detector_load_2k_Apk=h[1,10],control_2k_ripple_Vpk=h[1,11])
+              row.update({f'K{k}_dBc':db20(h[k-1,2]/h[0,2]) for k in range(2,21)})
+              print('AUDIT',row,flush=True)
+              return row
+          with ThreadPoolExecutor(max_workers=3) as ex: rows=list(ex.map(run,[-30,0,18]))
+          import csv
+          with (out/'summary.csv').open('w') as f:
+              w=csv.DictWriter(f,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rms-input-audit
+          path: circuit/rms_audit/
