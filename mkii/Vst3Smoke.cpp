@@ -12,7 +12,7 @@
 #include <numbers>
 #include <vector>
 
-bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds) {
+bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds,bool cymbals=false) {
     using Clock=std::chrono::steady_clock;
     const int frames=(rate*seconds/quantum)*quantum;
     const auto signal=[rate,seconds](int n,int channel) {
@@ -29,13 +29,34 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
     const int expectedLatency=reference.latency();
     const int testFrames=frames+expectedLatency;
     juce::AudioBuffer<float> input(channels,testFrames);
-    for (int c=0;c<channels;++c)
-        for (int i=0;i<testFrames;++i)
-            input.setSample(c,i,signal(i,c));
+    for (int c=0;c<channels;++c) {
+        std::uint32_t random=0x7613f042u+static_cast<unsigned>(c);
+        double previousNoise=0,olderNoise=0;
+        for (int i=0;i<testFrames;++i) {
+            if (!cymbals) {
+                input.setSample(c,i,signal(i,c));
+                continue;
+            }
+            random^=random<<13;
+            random^=random>>17;
+            random^=random<<5;
+            const double noise=random*(2.0/4294967295.0)-1.0;
+            const double high=(noise-2*previousNoise+olderNoise)*0.25;
+            olderNoise=previousNoise;
+            previousNoise=noise;
+            const int burst=i/(rate/4);
+            const double age=double(i%(rate/4))/rate;
+            const double peak=burst%2==0?0.08:0.25;
+            input.setSample(c,i,static_cast<float>(peak*std::exp(-10*age)*high));
+        }
+    }
     auto expected=input;
     if (!reference.process(expected.getArrayOfWritePointers(),testFrames,{},true) ||
-        reference.failedSolves()!=0)
+        reference.failedSolves()!=0) {
+        std::cerr<<(cymbals?"Cymbal fixture":"Multitone fixture")
+                 <<" reference render failed, solver failures "<<reference.failedSolves()<<std::endl;
         return false;
+    }
     reference.stop();
 
     plugin.setNonRealtime(false);
@@ -76,7 +97,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
         }
     }
     std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), "<<quantum
-             <<"-sample host blocks, "<<seconds<<" s test, latency "<<latency
+             <<"-sample host blocks, "<<seconds<<" s "<<(cymbals?"cymbal-like":"multitone")<<" test, latency "<<latency
              <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs
              <<" ms, unexpected dry samples "<<unexpectedDrySamples<<std::endl;
     return unexpectedDrySamples==0 && maxError<0.00002 && maxCallbackMs<quantum*1000.0/rate;
@@ -126,6 +147,9 @@ int main(int argc, char** argv) {
         }
         plugin->releaseResources();
         playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),44100,layout.size(),512,12)
+                       && playbackPassed;
+        plugin->releaseResources();
+        playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),44100,layout.size(),512,6,true)
                        && playbackPassed;
 #else
         plugin->setNonRealtime(false);

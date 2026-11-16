@@ -118,6 +118,10 @@ public:
     bool prepare(double rate) {
         x = deck.bias;
         previous = x;
+        for (auto& entry : guesses) entry.nodes=x;
+        nextGuess=0;
+        guessCount=0;
+        previousMakeup=0;
         fixed.resize(deck.constants.size());
         supply(0,0.2,4,0);
         matrix.resize(deck.size);
@@ -150,9 +154,42 @@ public:
     }
 
     double step(double input, double threshold, double ratio, double makeup) {
+        const auto* seed=&previous;
+        const Guess* low=nullptr;
+        const Guess* high=nullptr;
+        double error=std::abs(input-lastInput);
+        const bool sameControls=threshold==lastThreshold && ratio==lastRatio && makeup==previousMakeup;
+        if (!sameControls) {
+            guessCount=0;
+            nextGuess=0;
+        }
+        // A recent solution at similar input can seed Newton across a
+        // polarity reversal. Charge history still comes from the exact
+        // preceding sample, and the solver evaluates the current sample.
+        if (error>0.010 && sameControls) {
+            for (int k=0;k<guessCount;++k) {
+                const auto& g=guesses[k];
+                const double e=std::abs(input-g.input);
+                if (e<0.6*error) {seed=&g.nodes;error=e;}
+                if ((input>=0)!=(g.input>=0)) continue;
+                if (g.input<=input && (!low || g.input>low->input)) low=&g;
+                if (g.input>=input && (!high || g.input<high->input)) high=&g;
+            }
+        }
         supply(input,threshold,ratio,makeup);
         prepareHistory();
-        std::copy(previous.begin(),previous.end(),x.begin());
+        if (low && high && high->input>low->input && high->input-low->input<0.16) {
+            const double w=(input-low->input)/(high->input-low->input);
+            for (int i=0;i<deck.size;++i)
+                x[i]=low->nodes[i]+w*(high->nodes[i]-low->nodes[i]);
+        } else std::copy(seed->begin(),seed->end(),x.begin());
+        if (sameControls) {
+            auto& g=guesses[nextGuess];
+            std::copy(previous.begin(),previous.end(),g.nodes.begin());
+            g.input=lastInput;
+            if (++nextGuess==static_cast<int>(guesses.size())) nextGuess=0;
+            guessCount=std::min(guessCount+1,static_cast<int>(guesses.size()));
+        }
         if (newton(12,0.16) || continueSource(input,threshold,ratio,makeup)) {
             accept(false);
             lastInput=input;
@@ -163,6 +200,7 @@ public:
             std::copy(previous.begin(),previous.end(),x.begin());
             ++misses;
         }
+        previousMakeup=makeup;
         return x[deck.out]/fullScalePeakVolts;
     }
 
@@ -217,6 +255,9 @@ private:
             int i=1;
             for (;i<=count;++i) {
                 supply(std::lerp(lastInput,input,static_cast<double>(i)/count),threshold,ratio,makeup);
+                // Moving the source also changes the known-voltage
+                // contributions to the linear residual.
+                prepareHistory();
                 if (!newton(16,0.16)) break;
             }
             if (i>count) return true;
@@ -235,7 +276,7 @@ private:
         bool solved=false;
         // Advance physical time with backward Euler on the shorter steps.
         // The next host sample resumes BDF2 with history on the host grid.
-        for (int count : {2,4,8,16,32,64}) {
+        for (int count : {2,4,8,16,32,64,128}) {
             restore();
             inverse=count*hostRate;
             history1=-inverse;
@@ -592,6 +633,10 @@ private:
     double inverse=0,history1=0,history2=0,ratioG=0;
     double lastThreshold=0,lastRatio=0,thresholdVolts=0,lastInput=0;
     double hostRate=0;
+    struct Guess {std::vector<double> nodes;double input=0;};
+    std::array<Guess,8> guesses;
+    int nextGuess=0,guessCount=0;
+    double previousMakeup=0;
     unsigned misses=0,subdivisions=0;
 };
 }

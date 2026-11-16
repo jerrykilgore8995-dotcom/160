@@ -2,7 +2,7 @@ name: 160 MKII native real-time Windows VST3
 
 on:
   push:
-    branches: [160-mkii-native]
+    branches: [160-mkii-cymbal]
   workflow_dispatch:
 
 jobs:
@@ -92,6 +92,6 @@ jobs:
           Copy-Item staging/native-parity.json,smoke-out.txt,mkii/native/README.md release
       - uses: actions/upload-artifact@v4
         with:
-          name: 160-MKII-0.1-Windows-x64-VST3-Native-Host-Buffer
+          name: 160-MKII-0.1-Windows-x64-VST3-Native-Cymbal-Qualified
           path: release
           if-no-files-found: error
