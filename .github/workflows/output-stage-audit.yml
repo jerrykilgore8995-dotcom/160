@@ -11,7 +11,7 @@ jobs:
       matrix:
         load: [600, 10000, 100000]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -39,8 +39,8 @@ jobs:
           .ends
           """
           rows=[]
-          for freq in [100,1000,10000]:
-              for level in [-30,0,12,18,21]:
+          for freq in [1000,100,10000]:
+              for level in [0,18,-30,12,21]:
                   peak=np.sqrt(2)*10**(level/20)/2
                   name=f'{freq}_{level}';raw=out/(name+'.tsv');deck=out/(name+'.cir')
                   deck.write_text(prefix+f'\nVIN AUDIO_OUT 0 SIN(0 {peak} {freq})\n'+stage+f"""
@@ -48,14 +48,14 @@ jobs:
           .control
           set wr_singlescale
           set wr_vecnames
-          tran .5u .3 .2 .5u
+          tran 1u .8 .7 1u
           wrdata {raw} v(audio_out) v(drv) v(out_plus) v(basep) v(basen) v(ep) v(en) i(vcp) i(vcn)
           quit
           .endc
           .end
           """)
                   with (out/(name+'.log')).open('w') as l:subprocess.run(['ngspice','-b',str(deck)],stdout=l,stderr=subprocess.STDOUT,check=True)
-                  a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>.29999
+                  a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>.79999
                   t=a[:,0];y=a[:,1:];w=np.sqrt(np.gradient(t));ph=2*np.pi*freq*t
                   X=np.column_stack([np.ones(len(t))]+[v for k in range(1,21) for v in (np.cos(k*ph),np.sin(k*ph))])
                   b=np.linalg.lstsq(X*w[:,None],y*w[:,None],rcond=None)[0];h=np.hypot(b[1::2],b[2::2])
@@ -66,6 +66,7 @@ jobs:
           deck.write_text(prefix+'\nVIN AUDIO_OUT 0 0\n'+stage+'\nIIN 0 OUT_PLUS DC 0 AC 1\n.control\nset wr_singlescale\nset wr_vecnames\nop\nprint v(out_plus) v(basep) v(basen) v(ep) v(en) i(vcp) i(vcn)\nac dec 10 20 20000\nwrdata '+str(raw)+' mag(v(out_plus))\nquit\n.endc\n.end\n')
           with (out/'impedance.log').open('w') as l:subprocess.run(['ngspice','-b',str(deck)],stdout=l,stderr=subprocess.STDOUT,check=True)
           print((out/'impedance.log').read_text(),flush=True)
+          z=np.loadtxt(raw,skiprows=1);print('LOADED_OUTPUT_IMPEDANCE_1KHZ_OHM',float(np.interp(1000,z[:,0],z[:,1])),flush=True)
           with (out/'summary.csv').open('w') as f:
               w=csv.DictWriter(f,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
           PY
