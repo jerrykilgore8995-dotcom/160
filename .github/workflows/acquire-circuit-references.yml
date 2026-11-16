@@ -1,0 +1,52 @@
+name: Acquire circuit references
+on: [push, workflow_dispatch]
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and inventory sources
+        shell: bash
+        run: |
+          mkdir -p acquired
+          fetch() {
+            local name="$1" url="$2"
+            if curl -fL --retry 2 --connect-timeout 15 --max-time 90 "$url" -o "acquired/$name.tmp"; then
+              mv "acquired/$name.tmp" "acquired/$name"
+              printf '%s\t%s\t%s\n' "$name" "$url" "$(sha256sum "acquired/$name" | cut -d' ' -f1)" >> acquired/provenance.tsv
+            else
+              rm -f "acquired/$name.tmp"
+              printf '%s\t%s\n' "$name" "$url" >> acquired/failed.tsv
+            fi
+          }
+          fetch rc4558.zip https://www.ti.com/lit/zip/sloj053
+          fetch rc4558.pdf https://www.ti.com/lit/ds/symlink/rc4558.pdf
+          fetch lm301.pdf https://www.ti.com/lit/ds/symlink/lm301a.pdf
+          fetch lm723.pdf https://www.ti.com/lit/ds/symlink/lm723.pdf
+          fetch that.zip https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip
+          fetch original.pdf https://www.thehistoryofrecording.com/Manuals/DBX/dbx_160.pdf
+          fetch split.pdf https://audiocircuit.dk/downloads/dbx/DBX-160-lim-sch.pdf
+          fetch service.pdf https://audiocircuit.dk/downloads/dbx/DBX-16x-lim-sm.pdf
+          fetch official-manual-index.html https://dbxpro.com/en-US/downloads/en/service_manual
+          fetch official-schematic-index.html https://dbxpro.com/en-US/downloads/en/schematic
+          fetch vca-internals.html 'https://proaudiodesignforum.com/forum/php/viewtopic.php?t=1612'
+          fetch rms-patent.html https://patents.google.com/patent/US3681618A/en
+          fetch vca-patent.html https://patents.google.com/patent/US3714462A/en
+          fetch bjt.lib https://raw.githubusercontent.com/kicad-spice-library/KiCad-Spice-Library/master/Models/Transistor/BJT/BJT.lib
+          for z in acquired/*.zip; do
+            [ -f "$z" ] || continue
+            if unzip -t "$z"; then unzip -o "$z" -d "${z%.zip}_models"; else echo "$z invalid archive" >> acquired/failed.tsv; fi
+          done
+          for p in acquired/*.pdf; do
+            [ -f "$p" ] || continue
+            if [ "$(head -c 5 "$p")" != '%PDF-' ]; then echo "$p invalid PDF" >> acquired/failed.tsv; fi
+          done
+          grep -riE '^\s*\.(model|subckt)\s+(.*(4558|301|723|2181|2180|2252|2150|BC179|BC361|BC263|KE4858|1N4148))' acquired > /tmp/model-index.txt || true
+          mv /tmp/model-index.txt acquired/model-index.txt
+          cat acquired/model-index.txt
+          cat acquired/failed.tsv 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: circuit-reference-library
+          path: acquired/
