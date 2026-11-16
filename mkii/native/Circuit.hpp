@@ -98,7 +98,7 @@ struct Q { int c,b,e; double f1=0,f2=0,f=0,r1=0,r2=0,r=0; Jet fq{},rq{}; int sig
 struct J { int d,g,s; std::array<int,9> slots{}; };
 
 struct Circuit {
-    int size=0,nodes=0,out=0,control=0,level=0;
+    int size=0,nodes=0,out=0,control=0,level=0,filter=0,thresholdDifference=0;
     std::vector<Constant> constants;
     std::vector<R> resistors;
     std::vector<C> capacitors;
@@ -206,6 +206,10 @@ public:
 
     double controlVolts() const { return x[deck.control]; }
     double levelVolts() const { return x[deck.level]; }
+    // RCTL transforms the filtered detector voltage before summing VMAKE.
+    // Read the detector contribution while it is still independent of makeup.
+    double gainReductionDb() const { return std::max(0.0,-x[deck.filter]*compressionScale/0.0061); }
+    bool aboveThreshold() const { return x[deck.thresholdDifference]>0; }
     int operations() const { return matrix.operationCount(); }
     void emitSolver(std::ostream& code,std::string_view name) const {
         matrix.emit(code,name);
@@ -347,7 +351,8 @@ private:
         }
         if (ratio != lastRatio) {
             lastRatio=ratio;
-            ratioG=1/(10000*std::max(1e-6,0.0061/0.0065*(1-1/ratio)/0.9399));
+            compressionScale=std::max(1e-6,0.0061/0.0065*(1-1/ratio)/0.9399);
+            ratioG=1/(10000*compressionScale);
         }
         for (std::size_t i=0;i<deck.constants.size();++i) {
             const auto& s=deck.constants[i];
@@ -630,7 +635,7 @@ private:
     Sparse matrix;
     std::vector<double> x,previous,fixed,savedNodes;
     std::vector<History> savedHistory;
-    double inverse=0,history1=0,history2=0,ratioG=0;
+    double inverse=0,history1=0,history2=0,ratioG=0,compressionScale=0;
     double lastThreshold=0,lastRatio=0,thresholdVolts=0,lastInput=0;
     double hostRate=0;
     struct Guess {std::vector<double> nodes;double input=0;};

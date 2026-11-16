@@ -36,7 +36,11 @@ public:
     void stop() {if (instance) api->stop(instance);}
     int latency() const {return instance?(delay?delay:api->latency):0;}
     unsigned failedSolves() const {return instance?api->failedSolves(instance):0;}
-    float controlVolts() const {return instance?api->controlVolts(instance):0;}
+    MeterReadings readMeters() const {
+        MeterReadings meters;
+        if (instance) api->readMeters(instance,&meters);
+        return meters;
+    }
     bool process(float* const* audio,int count,Controls settings,bool offline,bool dry=false) {
         return instance && api->process(instance,audio,count,&settings,offline,dry);
     }

@@ -28,7 +28,7 @@ const Api runtime{
         return engine(instance).process(audio,count,*settings,offline!=0,dry!=0);
     },
     [](void* instance) {return engine(instance).failedSolves();},
-    [](void* instance) {return engine(instance).controlVolts();}
+    [](void* instance,mkii::native::MeterReadings* meters) {*meters=engine(instance).readMeters();}
 };
 }
 

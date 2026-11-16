@@ -162,6 +162,7 @@ cpp = ["// Generated from 160_retrofit.cir and its manufacturer includes.",
        "inline void loadDeck(Circuit& c) {", f"    c.nodes = {len(nodes)};",
        f"    c.size = {len(variables)};", f"    c.out = {ix('out_plus')};",
        f"    c.control = {ix('ec_minus')};", f"    c.level = {ix('level')};",
+       f"    c.filter = {ix('filter_buf')};", f"    c.thresholdDifference = {ix('diff')};",
        "    c.bias = {" + ", ".join(fmt(bias(k)) for k in variables) + "};"]
 for kind,value in known.values():
     cpp.append(f"    c.constants.push_back({{{kind}, {fmt(value)}}});")

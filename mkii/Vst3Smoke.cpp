@@ -12,6 +12,51 @@
 #include <numbers>
 #include <vector>
 
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
+
+bool captureEditor() {
+    std::unique_ptr<juce::AudioProcessor> processor(createPluginFilter());
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor->createEditorIfNeeded());
+    if (!editor) return false;
+    const auto image=editor->createComponentSnapshot(editor->getLocalBounds(),true,2.0f);
+    auto file=juce::File::getCurrentWorkingDirectory().getChildFile("160-MKII-faceplate.png");
+    juce::FileOutputStream output(file);
+    return output.openedOk() && juce::PNGImageFormat().writeImageToStream(image,output);
+}
+
+bool testMakeupMeter(const juce::String& dllPath) {
+    constexpr int rate=44100, quantum=512;
+    mkii::native::Client engine;
+    if (!engine.open(dllPath.toWideCharPointer()) || !engine.prepare(rate,1,quantum)) return false;
+    juce::AudioBuffer<float> audio(1,quantum);
+    int position=0;
+    const auto measure=[&](float peak,float makeup) {
+        bool okay=true;
+        for (int block=0;block<24;++block) {
+            for (int i=0;i<quantum;++i,++position)
+                audio.setSample(0,i,peak*std::sin(2*std::numbers::pi*1000*position/rate));
+            okay=engine.process(audio.getArrayOfWritePointers(),quantum,{0.2f,4,makeup},true) && okay;
+        }
+        const auto meters=engine.readMeters();
+        std::cout<<"Meter with input peak "<<peak<<", makeup "<<makeup<<": GR "
+                 <<meters.gainReductionDb<<" dB, input power "<<meters.inputMeanSquare
+                 <<", output power "<<meters.outputMeanSquare<<", above threshold "
+                 <<meters.aboveThreshold<<std::endl;
+        return std::pair{okay,meters};
+    };
+    const auto [idleOkay,idle]=measure(0.004f,0);
+    const auto [idleBoostOkay,idleBoost]=measure(0.004f,10);
+    const auto [activeOkay,active]=measure(0.06f,0);
+    const auto [activeBoostOkay,activeBoost]=measure(0.06f,10);
+    return idleOkay && idleBoostOkay && activeOkay && activeBoostOkay
+        && idle.gainReductionDb<0.1f && idleBoost.gainReductionDb<0.1f
+        && !idle.aboveThreshold && !idleBoost.aboveThreshold
+        && active.gainReductionDb>2 && active.aboveThreshold && activeBoost.aboveThreshold
+        && std::abs(active.gainReductionDb-activeBoost.gainReductionDb)<0.1f
+        && std::abs(10*std::log10(activeBoost.inputMeanSquare/active.inputMeanSquare))<0.2f
+        && std::abs(10*std::log10(activeBoost.outputMeanSquare/active.outputMeanSquare)-10)<0.8f;
+}
+
 bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds,bool cymbals=false) {
     using Clock=std::chrono::steady_clock;
     const int frames=(rate*seconds/quantum)*quantum;
@@ -129,6 +174,14 @@ int main(int argc, char** argv) {
     bool playbackPassed=true;
     const auto dll=juce::File(juce::String::fromUTF8(argv[1])).getChildFile("Contents")
         .getChildFile("Resources").getChildFile("Native").getChildFile("160-native.dll");
+    if (!captureEditor()) {
+        std::cerr<<"Could not render the faceplate"<<std::endl;
+        return 10;
+    }
+    if (!testMakeupMeter(dll.getFullPathName())) {
+        std::cerr<<"The meter did not distinguish makeup gain from compression"<<std::endl;
+        return 11;
+    }
 #endif
     for (const auto layout : {juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo()}) {
         std::cout << "Configuring " << layout.size() << " channel(s)" << std::endl;

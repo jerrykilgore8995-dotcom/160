@@ -7,6 +7,8 @@
 #include <atomic>
 #include <cmath>
 #include <string>
+#include <limits>
+#include "Panel.hpp"
 #ifdef MKII_NATIVE
 #include "native/Client.hpp"
 #else
@@ -188,6 +190,11 @@ public:
 
 #ifdef MKII_NATIVE
     void prepareToPlay(double sampleRate,int blockSize) override {
+        meterRate=sampleRate;
+        inputLevel.store(-60);
+        outputLevel.store(-60);
+        gr.store(0);
+        above.store(false);
         ready=engine.prepare(sampleRate,getTotalNumInputChannels(),blockSize);
         if (ready) setLatencySamples(engine.latency());
         status.store(ready?live:failed);
@@ -235,7 +242,7 @@ public:
     }
 #else
     void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer&) override {
-        if (!isNonRealtime()) {
+        if (!isNonRealtime() || power->load()<0.5f) {
             renderEnded = true;
             status.store(live);
             gr.store(0);
@@ -257,7 +264,7 @@ public:
             started = !broken;
         }
 
-        float maxControl = 0.0f;
+        float maxControl = -std::numeric_limits<float>::infinity();
         for (int offset = 0; offset < audio.getNumSamples() && !broken;) {
             settings.samples = static_cast<std::uint32_t>(std::min(audio.getNumSamples() - offset,
                                                                    static_cast<int>(maxBlock)));
@@ -285,7 +292,9 @@ public:
 
     juce::AudioProcessorValueTreeState state;
     std::atomic<Status> status{live};
-    std::atomic<float> gr{0};
+    std::atomic<float> gr{0}, inputLevel{-60}, outputLevel{-60};
+    std::atomic<bool> above{false};
+    int meterMode=2;
 
 private:
 #ifdef MKII_NATIVE
@@ -304,10 +313,24 @@ private:
         const native::Controls controls{quantize(threshold->load(),1000),
                                         quantize(ratio->load(),100),
                                         quantize(output->load(),10)};
+        dry=dry || power->load()<0.5f;
         const auto okay=engine.process(audio.getArrayOfWritePointers(),audio.getNumSamples(),
                                        controls,isNonRealtime(),dry);
         status.store(okay && !engine.failedSolves()?live:failed);
-        gr.store(std::clamp(engine.controlVolts()/0.0061f+controls.makeup,0.0f,40.0f));
+        const auto meters=engine.readMeters();
+        gr.store(std::clamp(meters.gainReductionDb,0.0f,40.0f));
+        above.store(meters.aboveThreshold!=0);
+        const auto toDecibels=[](float meanSquare) {
+            constexpr double scale=fullScalePeakVolts/0.775;
+            return static_cast<float>(10*std::log10(std::max(1.0e-6,meanSquare*scale*scale)));
+        };
+        const float coefficient=static_cast<float>(-std::expm1(-audio.getNumSamples()/(0.10*meterRate)));
+        const auto follow=[coefficient](std::atomic<float>& level,float target) {
+            const auto previous=level.load(std::memory_order_relaxed);
+            level.store(previous+coefficient*(target-previous),std::memory_order_relaxed);
+        };
+        follow(inputLevel,toDecibels(meters.inputMeanSquare));
+        follow(outputLevel,toDecibels(meters.outputMeanSquare));
     }
 #endif
 
@@ -325,10 +348,13 @@ private:
         values.add(std::make_unique<Param>(juce::ParameterID{"ratio", 1}, "Compression", ratio, 4.0f));
         values.add(std::make_unique<Param>(juce::ParameterID{"output", 1}, "Output Gain",
                                           juce::NormalisableRange<float>{-20, 20, 0.1f}, 0.0f));
+        values.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"power",1},"Power",true));
         return values;
     }
 
+    std::atomic<float>* power=state.getRawParameterValue("power");
 #ifdef MKII_NATIVE
+    double meterRate=44100;
     native::Client engine;
     std::atomic<float>* threshold=state.getRawParameterValue("threshold");
     std::atomic<float>* ratio=state.getRawParameterValue("ratio");
@@ -343,86 +369,7 @@ private:
 #endif
 };
 
-class Panel : public juce::AudioProcessorEditor, private juce::Timer {
-public:
-    explicit Panel(Compressor& owner) : AudioProcessorEditor(owner), processor(owner) {
-        const char* ids[] = {"threshold", "ratio", "output"};
-        const char* labels[] = {"Threshold (V RMS)", "Compression", "Output Gain (dB)"};
-        for (int i = 0; i < 3; ++i) {
-            controls[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-            controls[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 21);
-            controls[i].setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffcec3a6));
-            controls[i].setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff43423f));
-            controls[i].setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xfff0ead9));
-            title[i].setText(labels[i], juce::dontSendNotification);
-            title[i].setJustificationType(juce::Justification::centred);
-            title[i].setColour(juce::Label::textColourId, juce::Colour(0xffe0d9c7));
-            addAndMakeVisible(controls[i]);
-            addAndMakeVisible(title[i]);
-            attachments[i] = std::make_unique<Attachment>(owner.state, ids[i], controls[i]);
-        }
-        setSize(568, 198);
-        startTimerHz(15);
-    }
-
-    void resized() override {
-        for (int i = 0; i < 3; ++i) {
-            title[i].setBounds(248 + i * 101, 37, 98, 22);
-            controls[i].setBounds(248 + i * 101, 60, 98, 95);
-        }
-    }
-
-    void paint(juce::Graphics& g) override {
-        g.fillAll(juce::Colour(0xff181916));
-        g.setColour(juce::Colour(0xffdcd3bc));
-        g.setFont(22);
-        g.drawText("160 MKII", 20, 12, 155, 31, juce::Justification::centredLeft);
-        g.setFont(13);
-        g.drawText("0.1", 123, 13, 44, 31, juce::Justification::centredLeft);
-        g.setColour(juce::Colour(0xff30302c));
-        g.fillRoundedRectangle(20, 53, 210, 94, 4);
-        g.setColour(juce::Colour(0xfff3dfaa));
-        g.fillRoundedRectangle(28, 60, 194, 80, 2);
-        g.setColour(juce::Colour(0xff242018));
-        g.setFont(12);
-        g.drawText("GAIN REDUCTION", 52, 113, 146, 18, juce::Justification::centred);
-        const auto origin = juce::Point<float>(125, 158);
-        for (int i = 0; i <= 4; ++i) {
-            const float angle = -0.75f + 0.375f * static_cast<float>(i);
-            const juce::Point<float> radial{std::sin(angle), -std::cos(angle)};
-            const auto tick = origin + radial * 84.0f;
-            g.drawLine({tick, origin + radial * 76.0f});
-            g.drawText(juce::String(40 - 10 * i), static_cast<int>(tick.x) - 11,
-                       static_cast<int>(tick.y) - 16, 22, 14, juce::Justification::centred);
-        }
-        const float angle = 0.75f - 1.5f * processor.gr.load() / 40.0f;
-        g.setColour(juce::Colour(0xff862620));
-        g.drawLine({origin + juce::Point<float>{std::sin(angle), -std::cos(angle)} * 23.0f,
-                    origin + juce::Point<float>{std::sin(angle), -std::cos(angle)} * 74.0f}, 1.5f);
-        g.setColour(juce::Colour(0xffbdb7a7));
-        g.setFont(13);
-        const auto working = processor.status.load();
-#ifdef MKII_NATIVE
-        g.drawText(working==Compressor::failed?"Circuit processing missed audio":"Native circuit processing",
-                   20,162,528,24,juce::Justification::centredLeft);
-#else
-        g.drawText(working == Compressor::failed ? "Circuit render failed. Restart the offline bounce."
-                   : working == Compressor::rendering ? "Rendering through the SPICE circuit"
-                   : "Offline render only. Live playback passes through.",
-                   20, 162, 528, 24, juce::Justification::centredLeft);
-#endif
-    }
-
-private:
-    void timerCallback() override { repaint(); }
-    using Attachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    Compressor& processor;
-    std::array<juce::Slider, 3> controls;
-    std::array<juce::Label, 3> title;
-    std::array<std::unique_ptr<Attachment>, 3> attachments;
-};
-
-juce::AudioProcessorEditor* Compressor::createEditor() { return new Panel(*this); }
+juce::AudioProcessorEditor* Compressor::createEditor() { return new mkii::Panel<Compressor>(*this); }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new Compressor(); }

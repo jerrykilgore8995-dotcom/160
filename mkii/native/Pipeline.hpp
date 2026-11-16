@@ -68,12 +68,14 @@ public:
         position=0;
         underruns=0;
         maxRequiredDelay=0;
-        control=0;
+        meters={};
     }
 
     bool process(float* const* channels,int count,Controls settings,bool waitForRender=false,bool dry=false) {
         if (active==0 || count<=0) return false;
         bool complete=true;
+        std::array<double,2> inputEnergy{},outputEnergy{};
+        meters={};
         // Chunk big offline blocks so their size cannot exhaust the ring.
         for (int offset=0;offset<count;) {
             const int frames=std::min(count-offset,512);
@@ -98,7 +100,6 @@ public:
                 published.store(position+frames,std::memory_order_release);
                 voices[c].wake();
             }
-            control=0;
             for (int c=0;c<active;++c) {
                 auto& v=voices[c];
                 const auto need=position+frames>delay ? position+frames-delay : 0;
@@ -115,23 +116,30 @@ public:
                         continue;
                     }
                     const auto index=position+i-delay;
+                    const auto input=v.input[index&(capacity-1)].value;
                     if (dry) {
-                        channels[c][offset+i]=v.input[index&(capacity-1)].value;
+                        channels[c][offset+i]=input;
                     } else if (index>=available) {
                         // Maintain timeline and latency on an isolated miss.
-                        channels[c][offset+i]=v.input[index&(capacity-1)].value;
+                        channels[c][offset+i]=input;
                         ++underruns;
                         complete=false;
                     } else {
                         const auto& sample=v.output[index&(capacity-1)];
                         channels[c][offset+i]=sample.value;
-                        control=std::max(control,sample.control);
+                        meters.gainReductionDb=std::max(meters.gainReductionDb,sample.gainReductionDb);
+                        meters.aboveThreshold|=sample.aboveThreshold;
                     }
+                    const double output=channels[c][offset+i];
+                    inputEnergy[c]+=static_cast<double>(input)*input;
+                    outputEnergy[c]+=output*output;
                 }
             }
             position+=frames;
             offset+=frames;
         }
+        meters.inputMeanSquare=static_cast<float>(*std::max_element(inputEnergy.begin(),inputEnergy.end())/count);
+        meters.outputMeanSquare=static_cast<float>(*std::max_element(outputEnergy.begin(),outputEnergy.end())/count);
         return complete;
     }
 
@@ -142,12 +150,12 @@ public:
         for (int i=0;i<active;++i) count+=voices[i].failed.load(std::memory_order_relaxed);
         return count;
     }
-    float controlVolts() const {return control;}
+    MeterReadings readMeters() const {return meters;}
 
 private:
     static constexpr auto stopSignal=std::numeric_limits<std::uint64_t>::max();
     struct Input {float value=0;Controls settings;};
-    struct Output {float value=0,control=0;};
+    struct Output {float value=0,gainReductionDb=0;bool aboveThreshold=false;};
     struct Voice {
         ~Voice() {
 #ifdef _WIN32
@@ -192,7 +200,8 @@ private:
                     const auto& k=s.settings;
                     auto& out=output[next&(capacity-1)];
                     out.value=static_cast<float>(solver.step(s.value,k.threshold,k.ratio,k.makeup));
-                    out.control=static_cast<float>(solver.controlVolts());
+                    out.gainReductionDb=static_cast<float>(solver.gainReductionDb());
+                    out.aboveThreshold=solver.aboveThreshold();
                 }
                 failed.store(solver.failures(),std::memory_order_relaxed);
                 completed.store(next,std::memory_order_release);
@@ -212,6 +221,6 @@ private:
     std::array<Voice,2> voices;
     int active=0;
     std::uint64_t position=0,underruns=0,delay=latency,maxRequiredDelay=0;
-    float control=0;
+    MeterReadings meters;
 };
 }

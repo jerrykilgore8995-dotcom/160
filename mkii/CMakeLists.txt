@@ -35,6 +35,7 @@ target_link_libraries(Vst3Smoke PRIVATE juce::juce_audio_processors juce::juce_g
                                         juce::juce_recommended_config_flags)
 
 if(MKII_NATIVE_RUNTIME)
+    target_sources(Vst3Smoke PRIVATE Plugin.cpp)
     foreach(target Circuit160 Vst3Smoke)
         target_compile_definitions(${target} PRIVATE MKII_NATIVE=1 NOMINMAX)
     endforeach()
