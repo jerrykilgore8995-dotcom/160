@@ -13,7 +13,7 @@ import numpy as np
 worker, deck, ngspice, report = [Path(p).resolve() for p in sys.argv[1:]]
 rate = 44100
 settle = 0.05
-scale = 13.786232066378589
+scale = 13.790836925122916
 frames = 4410
 grid = np.arange(frames) / rate
 signal = (0.09 * np.sin(2 * np.pi * 1000 * grid)).astype("<f4")

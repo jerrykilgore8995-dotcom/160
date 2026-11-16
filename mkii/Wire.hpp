@@ -28,7 +28,7 @@ static_assert(sizeof(Start) == 16 && sizeof(Block) == 16 && sizeof(Reply) == 8);
 
 // Differential peak volts for a full scale sample. This maps a -18 dBFS
 // peak sine to +4 dBu RMS at the deck's balanced input.
-constexpr double fullScalePeakVolts = 13.786232066378589;
+constexpr double fullScalePeakVolts = 13.790836925122916;
 constexpr double settleSeconds = 0.05;
 constexpr double maxStep = 2.5e-6;
 }

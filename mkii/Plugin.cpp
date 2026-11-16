@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
+#include <string>
 #include <windows.h>
 
 namespace {
@@ -21,7 +23,7 @@ public:
         if (!worker.existsAsFile()) return false;
         SECURITY_ATTRIBUTES attributes{sizeof(attributes), nullptr, TRUE};
         HANDLE workerInput = nullptr, workerOutput = nullptr;
-        if (!CreatePipe(&workerInput, &input, &attributes, 0)
+        if (!CreatePipe(&workerInput, &input, &attributes, sizeof(Block) + maxBlock * sizeof(float))
             || !CreatePipe(&output, &workerOutput, &attributes, 0)
             || !SetHandleInformation(input, HANDLE_FLAG_INHERIT, 0)
             || !SetHandleInformation(output, HANDLE_FLAG_INHERIT, 0)) {
@@ -110,16 +112,17 @@ private:
 
     bool read(void* destination, DWORD bytes) {
         auto* next = static_cast<char*>(destination);
+        const auto deadline = GetTickCount64() + 180000;
         while (bytes) {
-            DWORD transferred = 0;
-            while (true) {
-                DWORD available = 0;
+            DWORD available = 0;
+            while (available == 0) {
                 if (!PeekNamedPipe(output, nullptr, 0, nullptr, &available, nullptr)) return false;
-                if (available) break;
-                if (WaitForSingleObject(process, 1) != WAIT_TIMEOUT) return false;
+                if (available == 0 && (GetTickCount64() >= deadline
+                                      || WaitForSingleObject(process, 1) != WAIT_TIMEOUT)) return false;
             }
-            if (!ReadFile(output, next, bytes, &transferred, nullptr) || transferred == 0)
-                return false;
+            DWORD transferred = 0;
+            if (!ReadFile(output, next, std::min(bytes, available), &transferred, nullptr)
+                || transferred == 0) return false;
             bytes -= transferred;
             next += transferred;
         }

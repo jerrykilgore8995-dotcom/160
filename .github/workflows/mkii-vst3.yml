@@ -49,7 +49,7 @@ jobs:
           find /ucrt64/share/licenses -mindepth 1 -maxdepth 1 \
             \( -name '*ngspice*' -o -name '*gcc*' -o -name '*winpthreads*' \) \
             -exec cp -r {} "$dest/" \;
-          printf 'MKII_BATCH_SPICE=%s\n' "$(cygpath -w /ucrt64/bin/ngspice.exe)" >> "$GITHUB_ENV"
+          printf 'MKII_BATCH_SPICE=%s\n' "$(cygpath -w /ucrt64/bin/ngspice_con.exe)" >> "$GITHUB_ENV"
       - name: Build the VST3 and test host
         run: |
           cmake -S mkii -B build -A x64
