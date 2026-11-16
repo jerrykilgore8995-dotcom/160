@@ -1,0 +1,37 @@
+name: Quick whole-circuit THD
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/quick-thd.yml
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --help
+      - run: |
+          cd circuit
+          python3 generate_supply.py
+          python3 - <<'PY'
+          import measure_threshold as m
+          import inspect
+          s=inspect.getsource(m.measure).replace('max(1.5,20/freq)','max(0.25,20/freq)').replace('step=2e-6','step=5e-6').replace('raw.unlink()','pass')
+          exec(s,m.__dict__)
+          rows=m.batch([('quick_no_gr',3,1000,4),('quick_max_gr',.01,1000,4)],'quick.csv')
+          print('RELATIVE GR dB',rows[0]['gain_dB']-rows[1]['gain_dB'],flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quick-thd
+          path: circuit/measurements/
