@@ -1,0 +1,32 @@
+name: MKII exact model inventory
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/mkii-model-audit.yml
+      - mkii/**
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          (cd circuit && python3 generate_supply.py --quiet)
+          python3 mkii/import_netlist.py
+          python3 - <<'PY'
+          import json
+          d=json.load(open('mkii/circuit_inventory.json'))
+          for p in ['RC4558.301','2181_Macro_01.lib','4301_Macro_01.lib']:
+              print('MODEL_SOURCE',p)
+              for row in d['sources'][p]['lines']: print(row['text'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mkii-model-inventory
+          path: mkii/circuit_inventory.json
