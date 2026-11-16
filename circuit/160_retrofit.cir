@@ -4,6 +4,8 @@
 .include 4301_Macro_01.lib
 .include supply_generated.inc
 .include modern_blackmer_cells.inc
+.include models/BC341_user.lib
+.include models/BC361_user.lib
 * TI standard Boyle model pin order + - V+ V- OUT; verify downloaded header.
 .subckt RC4558_SECTION P M VP VN OUT
 XU P M VP VN OUT RC4558
@@ -58,15 +60,14 @@ RBIASP VP24 BASEP 10k
 RBIASN BASEN VN24 10k
 DBP BASEP DRV DSW
 DBN DRV BASEN DSW
-QP VP24 BASEP EP QDRVN
-QN VN24 BASEN EN QDRVP
+QP VP24 BASEP EP BC341
+QN VN24 BASEN EN BC361
 REP EP OUT_INTERNAL 22
 REN EN OUT_INTERNAL 22
 R89 OUT_INTERNAL OUT_PLUS 22
 RLOAD OUT_PLUS 0 600
 .model DSW D(IS=2.52n N=1.73 RS=.568 CJO=4p TT=4n)
-.model QDRVN NPN(IS=1e-14 BF=100 VAF=80 CJE=25p CJC=10p TF=.5n)
-.model QDRVP PNP(IS=1e-14 BF=100 VAF=80 CJE=25p CJC=10p TF=.5n)
-* Generic driver semiconductors explicitly not verified original BC361/BC263.
+* BC341/BC361 user-supplied models; original part identification supplied by user.
+* Model provenance and actual output-stage topology remain unverified.
 * No analysis directives until connectivity and model syntax checked.
 .end
