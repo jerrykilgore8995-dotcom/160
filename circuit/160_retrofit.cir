@@ -73,12 +73,14 @@ XDRV DRIVER_IN DRVM VP15 VN15 DRV RC4558_SECTION
 RFB OUT_INTERNAL DRVM 22.1k
 RG DRVM 0 22.1k
 * User-specified rail feed and base-emitter AC shunts; verify original schematic revision.
-RBIASP VP24 BASEP 2.2k
-RBIASN BASEN VN24 2.2k
-RBEP BASEP BECAP_P 5.6k
+RBIASP VP24 BECAP_P 2.2k
+RBIASN BECAP_N VN24 2.2k
+RBEP BECAP_P BASEP 5.6k
 CBEP BECAP_P EP 22u
-RBEN BASEN BECAP_N 5.6k
+RBEN BECAP_N BASEN 5.6k
 CBEN BECAP_N EN 22u
+* Rail feed to bootstrap junction, then 5.6k to base; 22u to emitter.
+* Original LM301 rail drop resistors omitted per user: RC4558 uses fixed +/-15V.
 DBP BASEP DRV DSW
 DBN DRV BASEN DSW
 QP VP24 BASEP EP BC341
