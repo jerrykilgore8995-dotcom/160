@@ -1,0 +1,28 @@
+* User-supplied BC341 model; provenance and datasheet fit not independently verified.
+* Not automatically substituted for BC263 or BC361.
+.model BC341 NPN (
++ IS=6.3e-14
++ BF=180
++ NF=1.0
++ VAF=75
++ IKF=0.25
++ ISE=1.2e-11
++ NE=1.5
++ BR=4
++ NR=1.0
++ VAR=20
++ IKR=0.03
++ ISC=2e-13
++ NC=2.0
++ RB=1.5
++ RE=0.6
++ RC=0.8
++ CJE=30p
++ VJE=0.65
++ MJE=0.33
++ CJC=10p
++ VJC=0.5
++ MJC=0.33
++ TF=0.6n
++ TR=50n
++ )
