@@ -30,8 +30,10 @@ jobs:
           p=pathlib.Path('modern_blackmer_cells.inc')
           s=p.read_text()
           if variant=='candidate':
-              s=s.replace('RT=2Meg CTVAL=10.576923u','RT=909k CTVAL=22u')
+              s=re.sub(r'RT=\S+ CTVAL=\S+', 'RT=909k CTVAL=22u', s)
               assert 'RT=909k CTVAL=22u' in s
+          else:
+              s=re.sub(r'RT=\S+ CTVAL=\S+', 'RT=2Meg CTVAL=10.576923u', s)
           p.write_text(s)
           base=pathlib.Path('160_retrofit.cir').read_text().rsplit('.end',1)[0]
           base=re.sub(r'RATIO=[^ ]+','RATIO=120',base,count=1)
