@@ -1,0 +1,28 @@
+* User-supplied LM301A candidate; not verified manufacturer model.
+* Ports: +IN -IN V+ V- OUT COMP1 COMP2.
+* WARNING: input stage polarity, compensation transfer and output drive
+* require independent verification before replacing the RC4558.
+.subckt LM301A 1 2 3 4 5 6 7
+q1 11 2 13 qin
+q2 12 1 14 qin
+rc1 3 11 5.305k
+rc2 3 12 5.305k
+re1 13 15 2.45k
+re2 14 15 2.45k
+iee 15 4 16u
+ree 15 0 12meg
+cee 15 0 1.5p
+cin 1 2 3p
+ga 6 0 11 12 188.5u
+r2 6 0 100k
+gb 7 0 6 0 140
+ro2 7 0 7.14m
+ec 18 0 7 0 1
+rout 18 5 75
+d1 5 19 dlim
+d2 20 5 dlim
+vlim1 3 19 1.6
+vlim2 20 4 1.6
+.model qin NPN(IS=800e-18 BF=125)
+.model dlim D(IS=1e-14)
+.ends LM301A
