@@ -17,7 +17,7 @@ constexpr Mark threshold[] = {
 };
 constexpr Mark ratio[] = {
     {1,-137,"1"}, {1.5,-105,"1.5"}, {2,-71,"2"}, {3,-34,"3"}, {4,0,"4"},
-    {6,34,"6"}, {10,67,"10"}, {20,102,"20"}, {120,137,"\\u221e"}
+    {6,34,"6"}, {10,67,"10"}, {20,102,"20"}, {120,137,"\xe2\x88\x9e"}
 };
 constexpr Mark gain[] = {
     {-20,-136,"-20"}, {-15,-102,""}, {-10,-68,"-10"}, {-5,-34,""}, {0,0,"0"},
@@ -163,6 +163,7 @@ public:
         drawLamp(g,76,isOn && !above,juce::Colour(0xffffb326));
         drawLamp(g,114,isOn && above,juce::Colour(0xffff3c29));
 
+        g.setColour(ink);
         g.setFont(juce::Font(juce::FontOptions(12.0f,juce::Font::bold)));
         g.drawText("POWER",60,174,70,16,juce::Justification::centred);
         g.drawText("INPUT",199,179,51,14,juce::Justification::centred);
@@ -259,7 +260,9 @@ private:
             if (dB%10!=0) continue;
             const auto location=polar(pivot,143,a).toInt();
             const auto mark=(dB>0?"+":"")+juce::String(dB);
-            g.drawText(mark,location.x-13,location.y-7,26,14,juce::Justification::centred);
+            const int markX=juce::jlimit(static_cast<int>(glass.getX())+15,
+                                        static_cast<int>(glass.getRight())-15,location.x);
+            g.drawText(mark,markX-13,location.y-7,26,14,juce::Justification::centred);
         }
         g.setFont(juce::Font(juce::FontOptions(15.0f,juce::Font::bold)));
         g.drawText("DECIBELS",glass.toNearestInt().withTrimmedTop(51).withHeight(20),juce::Justification::centred);
