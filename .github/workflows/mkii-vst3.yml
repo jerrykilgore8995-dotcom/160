@@ -1,0 +1,76 @@
+name: 160 MKII 0.1 Windows VST3
+
+on:
+  push:
+    branches: [160-mkii-0.1]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy
+      - name: Obtain the same manufacturer models as the reference
+        shell: pwsh
+        run: |
+          curl.exe -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          curl.exe -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python mkii/prepare_models.py staging/Circuit ti.zip that.zip
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-ngspice
+      - name: Build isolated ngspice solver
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          dest=staging/Circuit
+          g++ -std=c++20 -O3 -Wall -Wextra mkii/SpiceWorker.cpp -lngspice -o "$dest/160-circuit.exe"
+          cp /ucrt64/lib/ngspice/spice2poly.cm "$dest/"
+          shopt -s nullglob
+          binaries=("$dest/160-circuit.exe" "$dest/spice2poly.cm")
+          for (( i=0; i<${#binaries[@]}; ++i )); do
+            while read -r dll; do
+              if [[ -f "/ucrt64/bin/$dll" && ! -f "$dest/$dll" ]]; then
+                cp "/ucrt64/bin/$dll" "$dest/"
+                binaries+=("$dest/$dll")
+              fi
+            done < <(objdump -p "${binaries[i]}" | awk '/DLL Name:/ {print $3}')
+          done
+          find /ucrt64/share/licenses -mindepth 1 -maxdepth 1 \
+            \( -name '*ngspice*' -o -name '*gcc*' -o -name '*winpthreads*' \) \
+            -exec cp -r {} "$dest/" \;
+          printf 'MKII_BATCH_SPICE=%s\n' "$(cygpath -w /ucrt64/bin/ngspice.exe)" >> "$GITHUB_ENV"
+      - name: Build the VST3 and test host
+        run: |
+          cmake -S mkii -B build -A x64
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build --config Release --target Circuit160_VST3 Vst3Smoke --parallel 4
+      - name: Check the worker against the original SPICE deck
+        run: python mkii/verify_stream.py staging/Circuit/160-circuit.exe staging/Circuit "$env:MKII_BATCH_SPICE" staging/parity-1kHz.json
+      - name: Install bundle resources and run mono and stereo smoke tests
+        shell: pwsh
+        run: |
+          $vst = Resolve-Path "build/Circuit160_artefacts/Release/VST3/160 MKII.vst3"
+          $resources = Join-Path $vst "Contents/Resources"
+          New-Item -ItemType Directory -Force $resources | Out-Null
+          Copy-Item "staging/Circuit" $resources -Recurse
+          & "build/Vst3Smoke_artefacts/Release/Vst3Smoke.exe" "$vst"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $vst release -Recurse
+          Copy-Item staging/parity-1kHz.json,mkii/README.md release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 160-MKII-0.1-Windows-x64-VST3-Offline
+          path: release
+          if-no-files-found: error
