@@ -63,8 +63,12 @@ jobs:
           $resources = Join-Path $vst "Contents/Resources"
           New-Item -ItemType Directory -Force $resources | Out-Null
           Copy-Item "staging/Circuit" $resources -Recurse
-          & "build/Vst3Smoke_artefacts/Release/Vst3Smoke.exe" "$vst"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $hostTest = (Resolve-Path "build/Vst3Smoke_artefacts/Release/Vst3Smoke.exe").Path
+          $vstPath = "`"$($vst.Path)`""
+          $test = Start-Process -FilePath $hostTest -ArgumentList $vstPath -NoNewWindow -PassThru -Wait -RedirectStandardOutput smoke-out.txt -RedirectStandardError smoke-err.txt
+          Get-Content smoke-out.txt,smoke-err.txt
+          Write-Host "VST3 smoke test exited with the code $($test.ExitCode)"
+          if ($test.ExitCode -ne 0) { exit $test.ExitCode }
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item $vst release -Recurse
           Copy-Item staging/parity-1kHz.json,mkii/README.md release

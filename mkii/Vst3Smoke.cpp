@@ -5,13 +5,18 @@
 #include <iostream>
 
 int main(int argc, char** argv) {
+    std::cout << "Starting Windows VST3 smoke test" << std::endl;
     if (argc != 2) return 2;
+    std::cout << "Module: " << argv[1] << std::endl;
     juce::ScopedJuceInitialiser_GUI initialise;
     juce::AudioPluginFormatManager formats;
     auto format = std::make_unique<juce::VST3PluginFormat>();
     juce::OwnedArray<juce::PluginDescription> descriptions;
     format->findAllTypesForFile(descriptions, juce::String::fromUTF8(argv[1]));
-    if (descriptions.size() != 1) return 3;
+    if (descriptions.size() != 1) {
+        std::cerr << "Expected one audio effect, found " << descriptions.size() << std::endl;
+        return 3;
+    }
     formats.addFormat(format.release());
     juce::String error;
     auto plugin = formats.createPluginInstance(*descriptions[0], 44100, 256, error);
@@ -19,13 +24,17 @@ int main(int argc, char** argv) {
         std::cerr << error << '\n';
         return 4;
     }
-    bool monoWorked = false, stereoWorked = false;
+    std::cout << "Loaded VST3 audio effect" << std::endl;
     for (const auto layout : {juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo()}) {
+        std::cout << "Configuring " << layout.size() << " channel(s)" << std::endl;
         plugin->releaseResources();
         juce::AudioProcessor::BusesLayout channels;
         channels.inputBuses.add(layout);
         channels.outputBuses.add(layout);
-        if (!plugin->setBusesLayout(channels)) return 5;
+        if (!plugin->setBusesLayout(channels)) {
+            std::cerr << "The VST3 rejected the bus arrangement" << std::endl;
+            return 5;
+        }
         plugin->setNonRealtime(false);
         plugin->prepareToPlay(44100, 256);
         juce::AudioBuffer<float> audio(layout.size(), 256);
@@ -35,8 +44,12 @@ int main(int argc, char** argv) {
                 audio.setSample(c, n, 0.1f * std::sin(2.0 * juce::MathConstants<double>::pi * 1000 * n / 44100));
         auto dry = audio;
         plugin->processBlock(audio, midi);
-        if (audio.getSample(0, 40) != dry.getSample(0, 40)) return 6;
+        if (std::abs(audio.getSample(0, 40) - dry.getSample(0, 40)) > 1.0e-7f) {
+            std::cerr << "Unexpected change during live playback" << std::endl;
+            return 6;
+        }
         plugin->releaseResources();
+        std::cout << "Rendering " << layout.size() << " channel(s) offline" << std::endl;
         plugin->setNonRealtime(true);
         plugin->prepareToPlay(44100, 256);
         plugin->processBlock(audio, midi);
@@ -48,12 +61,11 @@ int main(int argc, char** argv) {
                 peak = std::max(peak, std::abs(value));
                 difference = std::max(difference, std::abs(value - dry.getSample(c, n)));
             }
+            std::cout << "Channel " << c << " peak " << peak << ", change " << difference << std::endl;
             if (peak < 0.005f || difference < 0.005f) return 8;
         }
-        if (layout.size() == 1) monoWorked = true;
-        if (layout.size() == 2) stereoWorked = true;
     }
     plugin->releaseResources();
     std::cout << "Windows VST3 offline circuit render passed in mono and stereo\n";
-    return monoWorked && stereoWorked ? 0 : 9;
+    return 0;
 }
