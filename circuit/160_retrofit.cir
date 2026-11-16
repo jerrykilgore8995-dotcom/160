@@ -10,7 +10,7 @@
 .subckt RC4558_SECTION P M VP VN OUT
 XU P M VP VN OUT RC4558
 .ends
-.param RATIO=4 THRESHV=0.1 MAKEUPDB=0 RMSZERO=0
+.param RATIO=4 THRESHV=0.1 MAKEUPDB=0 RMSZERO={0.026220158-0.0065*20*log10(0.7071067811865476*(10k/22.2k)/23.2k/(0.085/10k))}
 * balanced source; voltage is differential peak.
 VINP IN_PLUS 0 SIN(0 0.5 1k)
 VINM IN_MINUS 0 SIN(0 -0.5 1k)
@@ -32,18 +32,34 @@ XBLACK OA3OUT EC_MINUS LEVEL AUDIO_OUT VP15 VN15 0 BLACKMER_AUDIO
 VTH THREF 0 {RMSZERO+0.0065*20*log10(THRESHV*(10k/22.2k)/23.2k/(0.085/10k))}
 * precision half wave inverting threshold amplifier: CLAMP is negative
 * above threshold, zero below. Real diode feedback, not abs/max envelope.
-RTHIN LEVEL NSUM 10k
+* Precision negative half-wave: input difference formed by differential amp.
+RDI1 THREF DIM 10k
+RDI2 DIFF DIM 10k
+RDI3 LEVEL DIP 10k
+RDI4 DIP 0 10k
+XDI DIP DIM VP15 VN15 DIFF RC4558_SECTION
+RTHIN DIFF NSUM 10k
 RTHFB CLAMP NSUM 10k
-XTH THREF NSUM VP15 VN15 RECTDRIVE RC4558_SECTION
+XTH 0 NSUM VP15 VN15 RECTDRIVE RC4558_SECTION
 DTH1 RECTDRIVE NSUM DSW
 DTH2 CLAMP RECTDRIVE DSW
-RTHLOAD CLAMP THREF 100k
+* Ground-referenced precision rectifier enforces CLAMP approximately zero below threshold.
+* R74/R77/C18 retrofit filter: original values, adapted connections; not verified original topology.
+RTHLOAD CLAMP 0 100Meg
+* Below threshold the feedback resistor returns CLAMP to virtual ground.
+* Use separate precision difference stage for above-threshold magnitude.
+* Ground referenced filter with unity DC transfer and high impedance buffer.
+R77 CLAMP FILTER_PRE 10k
+R74 FILTER_PRE FILTER_NODE 1k
+C18 FILTER_NODE 0 10n
+XFILT FILTER_NODE FILTER_BUF VP15 VN15 FILTER_BUF RC4558_SECTION
 * Remove threshold reference from rectified node using differential amp.
 * Inverting differential gain 6.1/6.5*(1-1/ratio).
 .param K={max(1e-6,0.0061/0.0065*(1-1/RATIO))}
-RCTL1 CLAMP CTLM 10k
+RCTL1 FILTER_BUF CTLM 10k
 RCTL2 EC_MINUS CTLM {10k*K}
-RCTL3 THREF CTLP 10k
+* Ground referenced rectifier: zero gain reduction below threshold.
+RCTL3 0 CTLP 10k
 RCTL4 CTLP MAKEUPREF {10k*K}
 VMAKE MAKEUPREF 0 {-0.0061*MAKEUPDB}
 XCTL CTLP CTLM VP15 VN15 EC_MINUS RC4558_SECTION
