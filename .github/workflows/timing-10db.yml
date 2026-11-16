@@ -1,0 +1,61 @@
+name: 10 dB timing
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/timing-10db.yml
+jobs:
+  timing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          python3 - <<'PY'
+          import numpy as np, pathlib, subprocess, re
+          from concurrent.futures import ThreadPoolExecutor
+          base=pathlib.Path('160_retrofit.cir').read_text().rsplit('.end',1)[0]
+          out=pathlib.Path('timing');out.mkdir(exist_ok=True)
+          def run(name,th):
+              s=re.sub(r'THRESHV=[^ ]+',f'THRESHV={th}',base)
+              for n,node,sgn in [('VINP','IN_PLUS',1),('VINM','IN_MINUS',-1)]:
+                  s=re.sub(r'^'+n+r' .*$',f'B{n} {node} 0 V={sgn*.5}*v(amp)*sin(2*pi*1000*time)',s,flags=re.M)
+              s+='\nVAMP amp 0 PWL(0 .05 .5 .05 .500001 1 1.5 1 1.500001 .05 2.3 .05)\n'
+              p=out/(name+'.cir');raw=out/(name+'.tsv')
+              p.write_text(s+f'\n.control\nset wr_singlescale\nset wr_vecnames\ntran 5u 2.3 0 5u\nwrdata {raw} v(out_plus) v(ec_minus) v(amp)\nquit\n.endc\n.end\n')
+              with (out/(name+'.log')).open('w') as l:subprocess.run(['ngspice','-b',str(p)],stdout=l,stderr=subprocess.STDOUT,check=True)
+              a=np.loadtxt(raw,skiprows=1);assert a[-1,0]>2.299
+              t=np.arange(0,2.3,1e-5);y=np.interp(t,a[:,0],a[:,1]).reshape(-1,100); tt=t.reshape(-1,100)[:,0]+.0005
+              ph=2*np.pi*np.arange(100)/100
+              mag=2*np.hypot(y@np.cos(ph),y@np.sin(ph))/100
+              amp=np.where((tt>.5)&(tt<1.5),1,.05)
+              gain=20*np.log10(np.maximum(mag/amp,1e-20))
+              lo=np.median(gain[(tt>.40)&(tt<.49)]); hi=np.median(gain[(tt>1.40)&(tt<1.49)])
+              gr=lo-hi
+              print(name,'threshold',th,'settled_GR',gr,flush=True)
+              np.savetxt(out/(name+'_envelope.csv'),np.c_[tt,lo-gain],delimiter=',',header='seconds,GR_dB')
+              return gr,tt,lo-gain
+          th=.15
+          for i in range(5):
+              gr,t,y=run('trial'+str(i),th)
+              if abs(gr-10)<.03:break
+              th*=10**((gr-10)/15)
+          if abs(gr-10)>=.03:raise SystemExit('10 dB calibration failed')
+          def cross(start,end,target,up):
+              ix=np.where((t>=start)&(t<end)&((y>=target) if up else (y<=target)))[0]
+              return float((t[ix[0]]-start)*1000) if len(ix) else float('nan')
+          print('FINAL actual_GR_dB',gr,'attack_63_percent_ms',cross(.501,1.5,.632*gr,True)+1,'release_63_percent_ms',cross(1.501,2.3,.368*gr,False)+1,'release_to_0.1dB_ms',cross(1.501,2.3,.1,False)+1,flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timing-10db
+          path: circuit/timing/
