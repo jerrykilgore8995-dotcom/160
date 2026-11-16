@@ -1,5 +1,6 @@
 """Black-box check of the actual plug-in worker against an independent batch deck."""
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -67,7 +68,9 @@ quit
 with tempfile.TemporaryDirectory(prefix="160-mkii-") as temp:
     temp_deck = Path(temp) / "reference.cir"
     temp_deck.write_text(batch, encoding="utf-8")
+    (Path(temp) / "spinit").write_text("codemodel ./spice2poly.cm\n", encoding="ascii")
     result = subprocess.run([str(ngspice), "-b", str(temp_deck)], cwd=deck,
+                            env={**os.environ, "SPICE_SCRIPTS": temp},
                             capture_output=True, timeout=180)
     raw = deck / "mkii-reference.dat"
     if result.returncode != 0 or not raw.exists():

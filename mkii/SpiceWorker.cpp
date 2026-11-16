@@ -164,8 +164,11 @@ int main(int argc, char** argv) {
         || !std::isfinite(stream.start.rate) || stream.start.rate < 8000 || stream.start.rate > 384000
         || !stream.receive())
         return 2;
-    ngSpice_nospinit();
-    ngSpice_nospiceinit();
+#ifdef _WIN32
+    _putenv_s("SPICE_SCRIPTS", ".");
+#else
+    setenv("SPICE_SCRIPTS", ".", 1);
+#endif
     ngSpice_Init(Stream::message, nullptr, Stream::exitRequested, Stream::sample,
                  Stream::initialise, nullptr, &stream);
     ngSpice_Init_Sync(Stream::voltage, nullptr, Stream::sync, nullptr, &stream);

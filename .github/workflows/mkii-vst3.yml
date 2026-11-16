@@ -74,3 +74,4 @@ jobs:
           name: 160-MKII-0.1-Windows-x64-VST3-Offline
           path: release
           if-no-files-found: error
+          include-hidden-files: true

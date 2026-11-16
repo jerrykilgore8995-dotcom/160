@@ -21,6 +21,9 @@ for name in ["modern_blackmer_cells.inc", "models/BC341_user.lib", "models/BC361
             [("VP15", 15), ("VN15", -15), ("VP24", 24), ("VN24", -24)]),
     encoding="ascii")
 
+for init in ["spinit", ".spiceinit"]:
+    (dest / init).write_text("* 160 MKII loads its bundled code model explicitly.\n", encoding="ascii")
+
 original = (circuit / "160_retrofit.cir").read_text(encoding="utf-8")
 (dest / "160_retrofit.cir").write_text(original, encoding="utf-8")
 deck = original
