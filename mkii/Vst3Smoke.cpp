@@ -39,9 +39,13 @@ int main(int argc, char** argv) {
         plugin->prepareToPlay(44100, 256);
         juce::AudioBuffer<float> audio(layout.size(), 256);
         juce::MidiBuffer midi;
+        constexpr float inputPeaks[] = {0.1f, 0.025f};
+        // The same 256 samples streamed directly into the reference worker,
+        // with the default 0.1 V threshold and 4:1 ratio.
+        constexpr float circuitPeaks[] = {0.004445671f, 0.002414901f};
         for (int c = 0; c < audio.getNumChannels(); ++c)
             for (int n = 0; n < audio.getNumSamples(); ++n)
-                audio.setSample(c, n, 0.1f * std::sin(2.0 * juce::MathConstants<double>::pi * 1000 * n / 44100));
+                audio.setSample(c, n, inputPeaks[c] * std::sin(2.0 * juce::MathConstants<double>::pi * 1000 * n / 44100));
         auto dry = audio;
         plugin->processBlock(audio, midi);
         if (std::abs(audio.getSample(0, 40) - dry.getSample(0, 40)) > 1.0e-7f) {
@@ -62,7 +66,10 @@ int main(int argc, char** argv) {
                 difference = std::max(difference, std::abs(value - dry.getSample(c, n)));
             }
             std::cout << "Channel " << c << " peak " << peak << ", change " << difference << std::endl;
-            if (peak < 0.005f || difference < 0.005f) return 8;
+            if (std::abs(peak - circuitPeaks[c]) > 0.00004f || difference < 0.005f) {
+                std::cerr << "Expected circuit peak " << circuitPeaks[c] << std::endl;
+                return 8;
+            }
         }
     }
     plugin->releaseResources();
