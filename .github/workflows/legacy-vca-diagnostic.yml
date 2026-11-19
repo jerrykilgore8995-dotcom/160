@@ -1,0 +1,28 @@
+name: Legacy dbx 200 and 202C VCA diagnostics
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'circuit/legacy_vca/**'
+      - '.github/workflows/legacy-vca-diagnostic.yml'
+jobs:
+  diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ['200','202C']
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y ngspice python3-numpy
+      - run: |
+          cd circuit/legacy_vca
+          python3 prepare_models.py
+          CELL=${{ matrix.cell }} python3 smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-vca-${{ matrix.cell }}
+          path: |
+            circuit/legacy_vca/results/
+            circuit/legacy_vca/devices.inc
