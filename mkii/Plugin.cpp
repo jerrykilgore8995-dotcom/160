@@ -321,42 +321,45 @@ private:
                                         quantize(ratio->load(),100),
                                         quantize(output->load(),10)};
         dry=dry || power->load()<0.5f;
-        // Preserve the aligned original signal in a fixed-size ring. Chunk only if
-        // the host exceeds the declared maximum block size.
+        // Stock wet path: no noise generator or per-sample mixing overhead.
+        // Keep the dry history current for instantaneous control changes.
         bool okay=true;
         const int count=audio.getNumSamples(),channels=audio.getNumChannels();
+        const float target=mix->load()*.01f,noiseTarget=noise->load();
+        const bool stock=dry || (target==1.f && mixSmoothed==1.f && noiseTarget==0.f && noiseSmoothed==0.f);
         double mixedEnergy[2]={};
         for(int offset=0;offset<count;) {
             const int n=std::min(count-offset,dryScratch.getNumSamples());
-            for(int i=0;i<n;++i) {
+            for(int i=0;i<n;) {
+                const int span=std::min(n-i,dryLength-dryPosition);
                 for(int c=0;c<channels;++c) {
-                    auto& slot=dryRing[c][dryPosition];
-                    dryScratch.setSample(c,i,slot);
-                    slot=audio.getSample(c,offset+i);
+                    auto* slot=dryRing[c].data()+dryPosition;
+                    if(!stock)std::copy_n(slot,span,dryScratch.getWritePointer(c,i));
+                    std::copy_n(audio.getReadPointer(c,offset+i),span,slot);
                 }
-                if(++dryPosition==dryLength)dryPosition=0;
+                dryPosition=(dryPosition+span)%dryLength;
+                i+=span;
             }
             std::array<float*,2> ptr{};
             for(int c=0;c<channels;++c)ptr[c]=audio.getWritePointer(c,offset);
             okay=engine.process(ptr.data(),n,controls,isNonRealtime(),dry)&&okay;
-            const float target=mix->load()*.01f, noiseTarget=noise->load();
-            for(int i=0;i<n;++i) {
-                mixSmoothed+=smoothing*(target-mixSmoothed);
-                noiseSmoothed+=smoothing*(noiseTarget-noiseSmoothed);
-                if(std::abs(mixSmoothed-target)<1e-6f)mixSmoothed=target;
-                if(std::abs(noiseSmoothed-noiseTarget)<1e-6f)noiseSmoothed=noiseTarget;
-                for(int c=0;c<channels;++c) {
-                    const float noiseSample=psu.next(c);
-                    if(!dry) {
+            if(!stock) {
+                for(int i=0;i<n;++i) {
+                    mixSmoothed+=smoothing*(target-mixSmoothed);
+                    noiseSmoothed+=smoothing*(noiseTarget-noiseSmoothed);
+                    if(std::abs(mixSmoothed-target)<1e-6f)mixSmoothed=target;
+                    if(std::abs(noiseSmoothed-noiseTarget)<1e-6f)noiseSmoothed=noiseTarget;
+                    const bool inject=noiseSmoothed!=0.f && mixSmoothed!=0.f;
+                    for(int c=0;c<channels;++c) {
                         const float original=dryScratch.getSample(c,i);
                         const float wet=ptr[c][i];
                         ptr[c][i]=mixSmoothed==1.f?wet:(mixSmoothed==0.f?original:original+mixSmoothed*(wet-original));
-                        ptr[c][i]+=mixSmoothed*noiseSmoothed*noiseSample;
+                        if(inject)ptr[c][i]+=mixSmoothed*noiseSmoothed*psu.next(c);
                     }
-                    mixedEnergy[c]+=double(ptr[c][i])*ptr[c][i];
+                    if(inject)psu.advance();
                 }
-                psu.advance();
             }
+            if(!stock)for(int c=0;c<channels;++c)for(int i=0;i<n;++i)mixedEnergy[c]+=double(ptr[c][i])*ptr[c][i];
             offset+=n;
         }
         status.store(okay && !engine.failedSolves()?live:failed);
@@ -373,7 +376,7 @@ private:
             level.store(previous+coefficient*(target-previous),std::memory_order_relaxed);
         };
         follow(inputLevel,toDecibels(meters.inputMeanSquare));
-        follow(outputLevel,toDecibels(float(std::max(mixedEnergy[0],mixedEnergy[1])/count)));
+        follow(outputLevel,toDecibels(stock?meters.outputMeanSquare:float(std::max(mixedEnergy[0],mixedEnergy[1])/count)));
     }
 #endif
 
