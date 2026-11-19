@@ -47,7 +47,7 @@ struct PsuNoise {
     float next(int c) {
         auto& v=voices[c];
         // Hum levels are peak dBFS; noise calibration is RMS dBFS.
-        return float(amplitude*v.pink()+0.0000794328234724*std::sin(phase)+0.0000281838293126*std::sin(2*phase));
+        return float(amplitude*v.pink()+0.000158489319246*std::sin(phase)+0.000112201845430*std::sin(2*phase));
     }
     void advance(){phase+=increment;if(phase>=6.283185307179586)phase-=6.283185307179586;}
 };
