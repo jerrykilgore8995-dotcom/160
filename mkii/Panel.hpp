@@ -123,7 +123,22 @@ public:
             selector.onClick=[this,i] {processor.meterMode=static_cast<int>(i); repaint();};
         }
         power.onStateChange=[this] {repaint();};
-        setSize(690,260);
+        options.setButtonText("Options v");
+        addAndMakeVisible(options);
+        mix.setSliderStyle(juce::Slider::LinearHorizontal);
+        mix.setTextBoxStyle(juce::Slider::TextBoxRight,false,72,22);
+        mix.setTextValueSuffix(" %");
+        mix.setName("Mix");
+        noise.setButtonText("Noise");
+        addChildComponent(mix);addChildComponent(noise);
+        mixAttachment=std::make_unique<SliderAttachment>(processor.state,"mix",mix);
+        noiseAttachment=std::make_unique<ButtonAttachment>(processor.state,"noise",noise);
+        options.onClick=[this]{
+            expanded=!expanded;mix.setVisible(expanded);noise.setVisible(expanded);
+            options.setButtonText(expanded?"Options ^":"Options v");
+            setSize(690,expanded?330:290);repaint();
+        };
+        setSize(690,290);
         startTimerHz(30);
     }
 
@@ -137,6 +152,9 @@ public:
         for (std::size_t i=0;i<controls.size();++i)
             controls[i].setBounds(static_cast<int>(panel::dialX[i])-32,84,64,64);
         power.setBounds(71,196,48,22);
+        options.setBounds(12,263,100,24);
+        mix.setBounds(72,294,390,28);
+        noise.setBounds(490,294,160,28);
         for (std::size_t i=0;i<selectors.size();++i)
             selectors[i].setBounds(199+static_cast<int>(i)*61,196,51,22);
     }
@@ -148,6 +166,7 @@ public:
         g.fillRect(0,10,getWidth(),240);
         drawRail(g,0);
         drawRail(g,248);
+        if(expanded){g.setColour(ink);g.setFont(13);g.drawText("MIX",15,294,50,28,juce::Justification::centredLeft); }
 
         g.setColour(ink);
         g.setFont(juce::Font(juce::FontOptions(15.0f,juce::Font::bold)));
@@ -295,6 +314,12 @@ private:
     juce::TextButton power;
     std::array<std::unique_ptr<SliderAttachment>,3> attachments;
     std::unique_ptr<ButtonAttachment> powerAttachment;
+    juce::TextButton options;
+    juce::Slider mix;
+    juce::ToggleButton noise;
+    std::unique_ptr<SliderAttachment> mixAttachment;
+    std::unique_ptr<ButtonAttachment> noiseAttachment;
+    bool expanded=false;
     float needleDb=0;
 };
 }
