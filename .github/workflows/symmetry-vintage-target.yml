@@ -1,0 +1,39 @@
+name: 160 symmetry trim vintage harmonic target
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/symmetry-vintage-target.yml
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        sym: ['48.5', '49.0', '49.5', '50.0', '50.5', '51.0', '51.5']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          SYM='${{ matrix.sym }}' python3 - <<'PY'
+          import pathlib,os
+          p=pathlib.Path('measure_limiting_frequency.py')
+          s=p.read_text().replace("assert 'SYM=0.499' in base","assert 'SYM=0.499' in base\nbase=base.replace('SYM=0.499','SYM='+str(float(os.environ['SYM'])/100))")
+          os.environ.update(FREQ='100',TARGET_GR='max')
+          print('TEST_SYMMETRY_PERCENT',os.environ['SYM'],flush=True)
+          exec(compile(s,str(p.resolve()),'exec'),{'__file__':str(p.resolve())})
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: symmetry-target-${{ matrix.sym }}
+          path: circuit/limiting_plus4/
