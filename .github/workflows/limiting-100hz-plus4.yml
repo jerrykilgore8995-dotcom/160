@@ -1,0 +1,33 @@
+name: 160VU 120-to-1 100 Hz GR sweep at plus4 dBm output
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/limiting-100hz-plus4.yml
+      - circuit/measure_limiting_frequency.py
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        gr: ['0', '10', '20', '30', '40', 'max']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          FREQ=100 TARGET_GR='${{ matrix.gr }}' python3 measure_limiting_frequency.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: limiting-100Hz-plus4-GR-${{ matrix.gr }}
+          path: circuit/limiting_plus4/
