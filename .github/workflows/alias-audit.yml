@@ -1,0 +1,35 @@
+name: 160 MKII 44.1 kHz alias audit
+on:
+  push:
+    branches: [160-alias-audit]
+  workflow_dispatch:
+jobs:
+  measure:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: 160-MKII-Windows-x64-VST3-Transport-Fixed
+          run-id: 44551007786
+          github-token: ${{ github.token }}
+          path: original
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Measure exact released native DLL at 44.1 kHz
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p staging/runtime
+          cp "$(find original -name 160-native.dll -print -quit)" staging/runtime/
+          g++ -std=c++20 -O2 -static mkii/native/AliasAudit.cpp -o staging/audit.exe
+          staging/audit.exe | tee staging/alias.csv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 160-MKII-alias-audit
+          path: staging/alias.csv
