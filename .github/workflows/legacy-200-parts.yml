@@ -1,0 +1,39 @@
+name: 160 vintage transistor substitution diagnostics
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/legacy-200-parts.yml
+      - circuit/legacy_vca/compare_200_parts.py
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ['npn', 'pnp', 'pair']
+        freq: ['100']
+        gr: ['max']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ngspice python3-numpy
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          python3 legacy_vca/prepare_models.py
+          MODE='${{ matrix.mode }}' FREQ='${{ matrix.freq }}' TARGET_GR='${{ matrix.gr }}' python3 legacy_vca/compare_200_parts.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-200-parts-${{ matrix.mode }}-${{ matrix.freq }}-${{ matrix.gr }}
+          path: |
+            circuit/limiting_plus4/summary.csv
+            circuit/limiting_plus4/all_trials.csv
+            circuit/legacy_vca/parts_results/
