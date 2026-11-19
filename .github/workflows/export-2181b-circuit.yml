@@ -1,0 +1,36 @@
+name: Export complete 160 2181B SPICE circuit
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-2181b-circuit.yml]
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-numpy ngspice
+          curl -fL --retry 3 https://www.ti.com/lit/zip/sloj053 -o ti.zip
+          curl -fL --retry 3 https://thatcorp.com/wp-content/uploads/2020/11/THATMacroModels-Rev05.zip -o that.zip
+          unzip -jo ti.zip RC4558.301 -d circuit
+          unzip -jo that.zip 2181_Macro_01.lib 4301_Macro_01.lib -d circuit
+          cd circuit
+          python3 generate_supply.py --quiet
+          mkdir -p ../export/models
+          cp 160_retrofit.cir modern_blackmer_cells.inc supply_generated.inc RC4558.301 2181_Macro_01.lib 4301_Macro_01.lib generate_supply.py ../export/
+          cp models/BC341_user.lib models/BC361_user.lib ../export/models/
+          cd ../export
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          def expand(path):
+              return re.sub(r'^\.include\s+(.+)$',lambda m:expand(Path(m.group(1).strip().strip('"'))),path.read_text(encoding='latin1'),flags=re.M|re.I)
+          Path('160-2181B-complete.cir').write_text(expand(Path('160_retrofit.cir')),encoding='latin1')
+          PY
+          printf '%s\n' 'Measured 160VU retrofit engineering candidate, not verified original schematic. Open 160-2181B-complete.cir in a text editor; no schematic graphic is included. Original modular deck and model files also included. Quiet supplies match harmonic measurements.' > README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 160-2181B-complete-SPICE-circuit
+          path: export/
