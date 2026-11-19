@@ -41,7 +41,7 @@ struct PsuNoise {
         calibration.hp.prepare(rate,40,true);calibration.lp.prepare(rate,15000,false);
         double sum=0;const int n=static_cast<int>(rate*2);
         for(int i=0;i<n+4096;++i){const double y=calibration.pink();if(i>=4096)sum+=y*y;}
-        amplitude=std::pow(10.,-80./20)/std::sqrt(sum/n);
+        amplitude=std::pow(10.,-83./20)/std::sqrt(sum/n);
         for(int c=0;c<2;++c){auto& v=voices[c];v.seed=0x12345678u+0x9e3779b9u*c;v.b.fill(0);v.hp.prepare(rate,40,true);v.lp.prepare(rate,15000,false);}
     }
     float next(int c) {
