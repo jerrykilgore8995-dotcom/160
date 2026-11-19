@@ -97,10 +97,11 @@ bool testFrequencyResponse(juce::AudioPluginInstance& plugin,int rate) {
     return passed;
 }
 
-bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds,bool cymbals=false) {
+bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds,bool cymbals=false,bool kicks=false) {
     using Clock=std::chrono::steady_clock;
     const int frames=(rate*seconds/quantum)*quantum;
-    const auto signal=[rate,seconds](int n,int channel) {
+    const auto signal=[rate,seconds,kicks](int n,int channel) {
+        if(kicks) {const int period=rate*2/5; if(n>=8*period)return 0.f; const double t=double(n%period)/rate; if(t>.2)return 0.f; return float(.85*std::exp(-t/.038)*std::sin(2*std::numbers::pi*(52*t+2*(1-std::exp(-t/.012))))); }
         const double t=static_cast<double>(n)/rate, angle=2*std::numbers::pi*t;
         const double phase=seconds>3? t-std::floor(t):t;
         const double envelope=(phase>0.28 && phase<0.43)?0.8:0.22;
@@ -156,6 +157,8 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
     double maxError=0,maxCallbackMs=0;
     unsigned unexpectedDrySamples=0;
     mkii::native::PlaybackClock clock;
+    if(kicks) std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::array<unsigned,8> kickErrors{};
     const auto start=Clock::now();
     for (int offset=0;offset<testFrames;offset+=quantum) {
         const int count=std::min(quantum,testFrames-offset);
@@ -174,6 +177,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
                 const double target=expected.getSample(c,offset+i);
                 maxError=std::max(maxError,std::abs(value-target));
                 const int source=offset+i-latency;
+                if(kicks && source>=0 && source/(rate*2/5)<8 && std::abs(value-target)>0.00002) ++kickErrors[source/(rate*2/5)];
                 if (source>=0) {
                     const float dry=input.getSample(c,source);
                     if (value==dry && std::abs(target-dry)>0.00002) ++unexpectedDrySamples;
@@ -181,6 +185,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
             }
         }
     }
+    if(kicks) for(int k=0;k<8;++k)std::cout<<"Warm idle KICK "<<k+1<<" error samples "<<kickErrors[k]<<std::endl;
     std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), "<<quantum
              <<"-sample host blocks, "<<seconds<<" s "<<(cymbals?"cymbal-like":"multitone")<<" test, latency "<<latency
              <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs
@@ -248,6 +253,8 @@ int main(int argc, char** argv) {
         plugin->releaseResources();
         playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),44100,layout.size(),512,6,true)
                        && playbackPassed;
+        plugin->releaseResources();
+        playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),44100,layout.size(),512,4,false,true) && playbackPassed;
 #else
         plugin->setNonRealtime(false);
         plugin->prepareToPlay(44100, 256);
