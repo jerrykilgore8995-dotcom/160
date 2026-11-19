@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <thread>
 #include <limits>
+#include <cmath>
+#include <numbers>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -45,6 +47,8 @@ public:
             v.written.store(0,std::memory_order_relaxed);
             v.completed.store(0,std::memory_order_relaxed);
             v.failed.store(0,std::memory_order_relaxed);
+            v.ready.store(0,std::memory_order_relaxed);
+            v.sampleRate=rate;
         }
         try {
             for (;active<channels;++active) {
@@ -54,6 +58,16 @@ public:
         } catch (...) {
             stop();
             return false;
+        }
+        // Activation must not return until all actual worker threads have run
+        // the circuit and reached their ready state. No host audio is used.
+        for (int i=0;i<active;++i) {
+            auto& v=voices[i];
+            const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+            while(v.ready.load(std::memory_order_acquire)==0 &&
+                  std::chrono::steady_clock::now()<deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if(v.ready.load(std::memory_order_acquire)!=1) {stop();return false;}
         }
         return true;
     }
@@ -179,7 +193,8 @@ private:
         }
         void waitForInput() {
 #ifdef _WIN32
-            WaitForSingleObject(event,INFINITE);
+            // Bounded idle wait: stay responsive even before the first host block.
+            WaitForSingleObject(event,1);
 #else
             std::this_thread::sleep_for(std::chrono::microseconds(75));
 #endif
@@ -188,6 +203,29 @@ private:
 #ifdef _WIN32
             SetThreadPriority(GetCurrentThread(),THREAD_PRIORITY_ABOVE_NORMAL);
 #endif
+            // Prime on the actual audio worker, not the host callback.
+            // Exercise the nonlinear path, then settle at zero gain reduction.
+            const double rate=sampleRate;
+            constexpr double threshold=0.2, ratio=4, makeup=0;
+            double amplitude=0.05;
+            for(int i=0;i<int(rate*0.35);++i) {
+                if(written.load(std::memory_order_relaxed)==stopSignal)return;
+                if(i%256==0) amplitude=std::clamp(amplitude*std::pow(10.0,(10.0-solver.gainReductionDb())/80.0),0.01,0.95);
+                const double t=double(i)/rate;
+                outputResponse.process(solver.step(amplitude*std::sin(2*std::numbers::pi*1000*t),threshold,ratio,makeup));
+            }
+            for(int i=0;i<int(rate*2.0);++i) {
+                if(written.load(std::memory_order_relaxed)==stopSignal)return;
+                outputResponse.process(solver.step(0,threshold,ratio,makeup));
+                if(i>int(rate*.1) && solver.gainReductionDb()<0.001 && !solver.aboveThreshold())break;
+            }
+            // Retain initialized numerical resources but restore the canonical
+            // quiescent circuit state for deterministic first-sample parity.
+            if(!solver.prepare(rate)) {ready.store(-1,std::memory_order_release);return;}
+            outputResponse.prepare(rate);
+            for(int i=0;i<512;++i) outputResponse.process(solver.step(0,threshold,ratio,makeup));
+            if(solver.failures()!=0) {ready.store(-1,std::memory_order_release);return;}
+            ready.store(1,std::memory_order_release);
             std::uint64_t next=0;
             while (true) {
                 const auto published=written.load(std::memory_order_acquire);
@@ -210,6 +248,8 @@ private:
                 completed.store(next,std::memory_order_release);
             }
         }
+        std::atomic<int> ready{0};
+        double sampleRate=44100;
         Solver solver;
         OutputResponse outputResponse;
         std::array<Input,capacity> input{};
