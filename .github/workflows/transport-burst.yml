@@ -1,4 +1,4 @@
-name: 160 MKII transport burst diagnostic
+name: 160 MKII transport-fixed Windows VST3
 
 on:
   push:
@@ -47,14 +47,57 @@ jobs:
           objdump -p staging/runtime/160-native.dll | grep 'DLL Name:'
           if objdump -p staging/runtime/160-native.dll | grep -Ei 'DLL Name:.*(ngspice|libstdc|libgcc|winpthread)'; then exit 1; fi
           if objdump -p staging/native.exe | grep -i 'DLL Name:.*ngspice'; then exit 1; fi
-      - name: Reproduce transport startup bursts
+      - name: Gate compiled DLL transport startup
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          g++ -std=c++20 -O3 -march=x86-64-v3 -fno-math-errno -pthread -I staging/generated -I staging/schedule mkii/native/TransportBurst.cpp -o staging/transport.exe
+          g++ -std=c++20 -O2 -static mkii/native/TransportBurst.cpp -o staging/transport.exe
           staging/transport.exe | tee staging/transport-burst.txt
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Measure parity at 1 kHz
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          staging/native.exe --capture > staging/native-1kHz.dat
+          python mkii/verify_stream.py staging/Circuit/reference.exe staging/Circuit staging/native-parity.json staging/native-1kHz.dat
+      - name: Record native solver timing and paced playback
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          staging/native.exe | tee staging/native-compute.txt
+          staging/native.exe --playback | tee staging/native-playback.txt
+      - uses: actions/cache/restore@v4
         with:
-          name: transport-burst-results
-          path: staging/transport-burst.txt
+          path: build-native
+          key: native-msvc-v1-${{ github.sha }}
+          restore-keys: native-msvc-v1-
+      - name: Build Windows VST3 and test host
+        shell: pwsh
+        run: |
+          cmake -S mkii -B build-native -A x64 -DMKII_NATIVE_RUNTIME=ON
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build build-native --config Release --target Circuit160_VST3 Vst3Smoke --parallel 4
+      - uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: build-native
+          key: native-msvc-v1-${{ github.sha }}
+      - name: Verify normal VST3 playback and package the bundle
+        shell: pwsh
+        run: |
+          $vst = (Resolve-Path "build-native/Circuit160_artefacts/Release/VST3/160 MKII.vst3").Path
+          $resources = Join-Path $vst "Contents/Resources/Native"
+          New-Item -ItemType Directory -Force $resources | Out-Null
+          Copy-Item "staging/runtime/160-native.dll" $resources
+          $hostTest = (Resolve-Path "build-native/Vst3Smoke_artefacts/Release/Vst3Smoke.exe").Path
+          $test = Start-Process -FilePath $hostTest -ArgumentList "`"$vst`"" -NoNewWindow -PassThru -Wait -RedirectStandardOutput smoke-out.txt -RedirectStandardError smoke-err.txt
+          Get-Content smoke-out.txt,smoke-err.txt
+          if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $vst release -Recurse
+          Copy-Item staging/transport-burst.txt,staging/native-parity.json,smoke-out.txt,mkii/native/README.md,160-MKII-faceplate.png release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 160-MKII-Windows-x64-VST3-Transport-Fixed
+          path: release
+          if-no-files-found: error
