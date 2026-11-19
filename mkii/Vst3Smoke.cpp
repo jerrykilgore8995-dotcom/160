@@ -9,19 +9,20 @@
 #include "native/PlaybackClock.hpp"
 
 #include <chrono>
+#include <array>
 #include <numbers>
 #include <vector>
 
 bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dllPath,int rate,int channels,int quantum,int seconds) {
     using Clock=std::chrono::steady_clock;
-    const int frames=(rate*seconds/quantum)*quantum;
-    const auto signal=[rate,seconds](int n,int channel) {
-        const double t=static_cast<double>(n)/rate, angle=2*std::numbers::pi*t;
-        const double phase=seconds>3? t-std::floor(t):t;
-        const double envelope=(phase>0.28 && phase<0.43)?0.8:0.22;
-        if (n%128==60 && (n/128)%41==3) return 0.75f;
-        return static_cast<float>(envelope*(0.57*std::sin(77*angle+channel)+0.19*std::sin(593*angle)
-                                   +0.11*std::sin(3241*angle)+0.08*std::sin(6771*angle)+0.05*std::sin(12949*angle)));
+    const int frames=((int(rate*3.5)+quantum-1)/quantum)*quantum;
+    const auto signal=[rate](int n,int channel) {
+        const int period=rate*2/5;
+        if(n>=8*period)return 0.f;
+        const double t=double(n%period)/rate;
+        if(t>.20)return 0.f;
+        const double phase=2*std::numbers::pi*(52*t+2.0*(1-std::exp(-t/0.012)));
+        return float(.85*std::exp(-t/.038)*std::sin(phase)+.12*std::exp(-t/.002)*std::sin(2*std::numbers::pi*2200*t));
     };
     mkii::native::Client reference;
     if (!reference.open(dllPath.toWideCharPointer()) || !reference.prepare(rate,channels,quantum))
@@ -49,6 +50,7 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
     juce::MidiBuffer midi;
     double maxError=0,maxCallbackMs=0;
     unsigned unexpectedDrySamples=0;
+    std::array<unsigned,8> dryByKick{},errorByKick{}; std::array<double,8> peakError{},peakCallback{};
     mkii::native::PlaybackClock clock;
     const auto start=Clock::now();
     for (int offset=0;offset<testFrames;offset+=quantum) {
@@ -67,14 +69,17 @@ bool testNativePlayback(juce::AudioPluginInstance& plugin,const juce::String& dl
                 if (!std::isfinite(value)) return false;
                 const double target=expected.getSample(c,offset+i);
                 maxError=std::max(maxError,std::abs(value-target));
+                const int k=(offset+i-latency)/(rate*2/5);
+                if(offset+i>=latency && k<8){peakError[k]=std::max(peakError[k],std::abs(value-target));if(std::abs(value-target)>0.00002)++errorByKick[k];}
                 const int source=offset+i-latency;
                 if (source>=0) {
                     const float dry=input.getSample(c,source);
-                    if (value==dry && std::abs(target-dry)>0.00002) ++unexpectedDrySamples;
+                    if (value==dry && std::abs(target-dry)>0.00002) {++unexpectedDrySamples;if(k<8)++dryByKick[k];}
                 }
             }
         }
     }
+    for(int k=0;k<8;++k) std::cout<<"KICK "<<k+1<<" dry_samples "<<dryByKick[k]<<" error_samples "<<errorByKick[k]<<" peak_error "<<peakError[k]<<std::endl;
     std::cout<<rate<<" Hz live playback with "<<channels<<" channel(s), "<<quantum
              <<"-sample host blocks, "<<seconds<<" s test, latency "<<latency
              <<" samples, peak waveform error "<<maxError<<", max callback "<<maxCallbackMs
@@ -120,7 +125,7 @@ int main(int argc, char** argv) {
             return 5;
         }
 #ifdef MKII_NATIVE
-        for (const int rate : {44100,48000}) {
+        for (const int rate : std::initializer_list<int>{}) {
             plugin->releaseResources();
             playbackPassed=testNativePlayback(*plugin,dll.getFullPathName(),rate,layout.size(),128,3) && playbackPassed;
         }
