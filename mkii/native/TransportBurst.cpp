@@ -9,7 +9,11 @@ using namespace mkii::native;
 int main(){
  constexpr int rate=44100,N=8192; bool pass=true;
  for(int B:{256,512}) for(int channels:{1,2}) for(int lead:{0,512,2048}) for(int burst:{1,3,5}) {
-  Client p; if(!p.open(L"staging/runtime/160-native.dll") || !p.prepare(rate,channels,B))return 2;
+  Client p;
+  wchar_t path[32768]{};
+  if(!GetFullPathNameW(L"staging/runtime/160-native.dll",32768,path,nullptr)){std::cerr<<"GetFullPathName failed "<<GetLastError()<<std::endl;return 2;}
+  if(!p.open(path)){std::wcerr<<L"DLL open failed: "<<path<<L" error "<<GetLastError()<<std::endl;return 2;}
+  if(!p.prepare(rate,channels,B)){std::cerr<<"DLL prepare failed B="<<B<<" channels="<<channels<<std::endl;return 2;}
   const int D=p.latency();
   std::vector<float> in[2],ref[2],actual[2];
   for(int c=0;c<channels;c++){
