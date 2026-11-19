@@ -123,6 +123,18 @@ public:
                     while (v.completed.load(std::memory_order_acquire)<need)
                         std::this_thread::sleep_for(std::chrono::microseconds(50));
                 }
+                // A host may deliver startup/anticipative blocks back-to-back.
+                // Only wait when the output deadline has actually been reached
+                // and the worker has not published the required samples.
+                // Experimental bounded deadline recovery; circuit is unchanged.
+                if (!waitForRender && !dry && v.completed.load(std::memory_order_acquire)<need) {
+                    const auto deadline=std::chrono::steady_clock::now()+
+                        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                            std::chrono::duration<double>(double(frames)/v.sampleRate));
+                    while (v.completed.load(std::memory_order_acquire)<need &&
+                           std::chrono::steady_clock::now()<deadline)
+                        std::this_thread::yield();
+                }
                 const auto available=v.completed.load(std::memory_order_acquire);
                 if (!waitForRender)
                     maxRequiredDelay=std::max(maxRequiredDelay,position+frames-available);
