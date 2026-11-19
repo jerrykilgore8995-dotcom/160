@@ -349,12 +349,12 @@ private:
                     noiseSmoothed+=smoothing*(noiseTarget-noiseSmoothed);
                     if(std::abs(mixSmoothed-target)<1e-6f)mixSmoothed=target;
                     if(std::abs(noiseSmoothed-noiseTarget)<1e-6f)noiseSmoothed=noiseTarget;
-                    const bool inject=noiseSmoothed!=0.f && mixSmoothed!=0.f;
+                    const bool inject=noiseSmoothed!=0.f;
                     for(int c=0;c<channels;++c) {
                         const float original=dryScratch.getSample(c,i);
                         const float wet=ptr[c][i];
                         ptr[c][i]=mixSmoothed==1.f?wet:(mixSmoothed==0.f?original:original+mixSmoothed*(wet-original));
-                        if(inject)ptr[c][i]+=mixSmoothed*noiseSmoothed*psu.next(c);
+                        if(inject)ptr[c][i]+=noiseSmoothed*psu.next(c);
                     }
                     if(inject)psu.advance();
                 }
